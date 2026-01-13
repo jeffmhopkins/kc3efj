@@ -159,7 +159,6 @@
             //  EASILY ADJUSTABLE SETTINGS
             // ────────────────────────────────────────────────
 
-            // Particle / Node settings
             const BASE_NODE_COUNT_DESKTOP = 150;
             const BASE_NODE_COUNT_MOBILE  = 150;
             const MIN_NODES               = 30;
@@ -168,9 +167,8 @@
             const NODE_SPEED_DESKTOP      = 0.5;
             const NODE_SPEED_MOBILE       = 0.5;
 
-            const NODE_RADIUS_PX          = 1.3; 
+            const NODE_RADIUS_PX          = 2.2;   // increased slightly for better visibility with SDF
 
-            // Connection line settings
             const LINE_THICKNESS_PX       = 1.01;
             const CONNECTION_DISTANCE_DESKTOP = 210;
             const CONNECTION_DISTANCE_MOBILE  = 210;
@@ -178,7 +176,6 @@
             const STATIC_LINE_ALPHA_BASE  = 0.65;
             const MOUSE_LINE_ALPHA_BASE   = 0.85;
 
-            // Color hue ranges (degrees)
             const HUE_RANGE_1_START       = 180;
             const HUE_RANGE_1_WIDTH       = 30;
             const HUE_RANGE_2_START       = 240;
@@ -189,9 +186,8 @@
             const SATURATION_BASE         = 0.5;
             const SATURATION_VARIANCE     = 1.0;
 
-            // Flood / signal
             const SIGNAL_SPEED            = 200;
-            const FLOOD_HEAD_SIZE         = 6;
+            const FLOOD_HEAD_SIZE         = 7;
             const FLOOD_LINE_PULSE_SPEED  = 0.008;
             const FLOOD_HEAD_PULSE_SPEED  = 0.012;
 
@@ -247,6 +243,105 @@
             const baseDensityDesktop = BASE_NODE_COUNT_DESKTOP / (baseWidth * baseHeight);
             const baseDensityMobile  = BASE_NODE_COUNT_MOBILE  / (baseWidth * baseHeight);
 
+            let particleProgram, lineProgram;
+            let particlePositionBuffer, particleColorBuffer, particleCenterBuffer;
+            let linePositionBuffer, lineAlphaBuffer;
+
+            function createShadersAndPrograms() {
+                // Vertex shader – fixed center projection
+                const vsSource = `
+                    attribute vec2 aPosition;
+                    attribute vec4 aColor;
+                    attribute vec2 aCenter;
+                    varying vec4 vColor;
+                    varying vec2 vCenter;
+                    uniform mat3 uProjection;
+                    void main() {
+                        vec3 pos3 = uProjection * vec3(aPosition, 1.0);
+                        gl_Position = vec4(pos3.xy, 0.0, 1.0);
+                        vColor = aColor;
+
+                        vec3 centerProj = uProjection * vec3(aCenter, 1.0);
+                        vec2 ndc = centerProj.xy;
+                        vCenter = (ndc * 0.5 + 0.5) * vec2(${width}, ${height});
+                    }
+                `;
+
+                const fsSource = `
+                    precision mediump float;
+                    varying vec4 vColor;
+                    varying vec2 vCenter;
+                    void main() {
+                        vec2 delta = gl_FragCoord.xy - vCenter;
+                        float distSq = dot(delta, delta);
+                        float r = ${NODE_RADIUS_PX * dpr};
+                        float rSq = r * r;
+                        float softness = 3.0;           // tweak for smoother edge
+                        float alpha = 1.0 - smoothstep(rSq - softness, rSq + softness, distSq);
+                        if (alpha < 0.02) discard;
+                        gl_FragColor = vec4(vColor.rgb, alpha * vColor.a);
+                    }
+                `;
+
+                const lineVsSource = `
+                    attribute vec2 aPosition;
+                    attribute float aAlpha;
+                    varying float vAlpha;
+                    uniform mat3 uProjection;
+                    void main() {
+                        vec3 pos3 = uProjection * vec3(aPosition, 1.0);
+                        gl_Position = vec4(pos3.xy, 0.0, 1.0);
+                        vAlpha = aAlpha;
+                    }
+                `;
+
+                const lineFsSource = `
+                    precision mediump float;
+                    varying float vAlpha;
+                    uniform vec4 uColor;
+                    void main() {
+                        gl_FragColor = uColor * vec4(1.0, 1.0, 1.0, vAlpha);
+                    }
+                `;
+
+                function createShader(type, source) {
+                    const shader = gl.createShader(type);
+                    gl.shaderSource(shader, source);
+                    gl.compileShader(shader);
+                    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                        console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+                        gl.deleteShader(shader);
+                        return null;
+                    }
+                    return shader;
+                }
+
+                function createProgram(vs, fs) {
+                    const program = gl.createProgram();
+                    gl.attachShader(program, vs);
+                    gl.attachShader(program, fs);
+                    gl.linkProgram(program);
+                    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                        console.error('Program link error:', gl.getProgramInfoLog(program));
+                        gl.deleteProgram(program);
+                        return null;
+                    }
+                    return program;
+                }
+
+                const vs = createShader(gl.VERTEX_SHADER, vsSource);
+                const fs = createShader(gl.FRAGMENT_SHADER, fsSource);
+                particleProgram = createProgram(vs, fs);
+
+                const lineVs = createShader(gl.VERTEX_SHADER, lineVsSource);
+                const lineFs = createShader(gl.FRAGMENT_SHADER, lineFsSource);
+                lineProgram = createProgram(lineVs, lineFs);
+
+                if (!particleProgram || !lineProgram) {
+                    console.error("Failed to create WebGL programs");
+                }
+            }
+
             function resize() {
                 dpr = window.devicePixelRatio || 1;
                 width = canvas.width = window.innerWidth * dpr;
@@ -259,103 +354,17 @@
                 const density = isMobile ? baseDensityMobile : baseDensityDesktop;
                 const count = Math.max(MIN_NODES, Math.min(MAX_NODES, Math.round(density * (window.innerWidth * window.innerHeight))));
 
+                // Recreate shaders & programs with current dimensions
+                createShadersAndPrograms();
+
                 initParticles(count);
-            }
 
-            window.addEventListener('resize', resize);
-            resize();
-
-            // ────────────────────────────────────────────────
-            // Shaders – particleProgram now used for quads (no gl_PointSize)
-            // ────────────────────────────────────────────────
-
-            const vsSource = `
-                attribute vec2 aPosition;
-                attribute vec4 aColor;
-                varying vec4 vColor;
-                uniform mat3 uProjection;
-                void main() {
-                    vec3 pos3 = uProjection * vec3(aPosition, 1.0);
-                    gl_Position = vec4(pos3.xy, 0.0, 1.0);
-                    vColor = aColor;
-                }
-            `;
-
-            const fsSource = `
-                precision mediump float;
-                varying vec4 vColor;
-                void main() {
-                    gl_FragColor = vColor;
-                }
-            `;
-
-            const lineVsSource = `
-                attribute vec2 aPosition;
-                attribute float aAlpha;
-                varying float vAlpha;
-                uniform mat3 uProjection;
-                void main() {
-                    vec3 pos3 = uProjection * vec3(aPosition, 1.0);
-                    gl_Position = vec4(pos3.xy, 0.0, 1.0);
-                    vAlpha = aAlpha;
-                }
-            `;
-
-            const lineFsSource = `
-                precision mediump float;
-                varying float vAlpha;
-                uniform vec4 uColor;
-                void main() {
-                    gl_FragColor = uColor * vec4(1.0, 1.0, 1.0, vAlpha);
-                }
-            `;
-
-            function createShader(type, source) {
-                const shader = gl.createShader(type);
-                gl.shaderSource(shader, source);
-                gl.compileShader(shader);
-                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-                    console.error(gl.getShaderInfoLog(shader));
-                    gl.deleteShader(shader);
-                    return null;
-                }
-                return shader;
-            }
-
-            function createProgram(vs, fs) {
-                const program = gl.createProgram();
-                gl.attachShader(program, vs);
-                gl.attachShader(program, fs);
-                gl.linkProgram(program);
-                if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-                    console.error(gl.getProgramInfoLog(program));
-                    gl.deleteProgram(program);
-                    return null;
-                }
-                return program;
-            }
-
-            const particleProgram = createProgram(
-                createShader(gl.VERTEX_SHADER, vsSource),
-                createShader(gl.FRAGMENT_SHADER, fsSource)
-            );
-
-            const lineProgram = createProgram(
-                createShader(gl.VERTEX_SHADER, lineVsSource),
-                createShader(gl.FRAGMENT_SHADER, lineFsSource)
-            );
-
-            const particlePositionBuffer = gl.createBuffer();
-            const particleColorBuffer    = gl.createBuffer();
-            const linePositionBuffer     = gl.createBuffer();
-            const lineAlphaBuffer        = gl.createBuffer();
-
-            function getProjection() {
-                return new Float32Array([
-                    2 / window.innerWidth, 0, 0,
-                    0, -2 / window.innerHeight, 0,
-                    -1, 1, 1
-                ]);
+                // Re-create buffers on resize
+                particlePositionBuffer = gl.createBuffer();
+                particleColorBuffer    = gl.createBuffer();
+                particleCenterBuffer   = gl.createBuffer();
+                linePositionBuffer     = gl.createBuffer();
+                lineAlphaBuffer        = gl.createBuffer();
             }
 
             function initParticles(count) {
@@ -385,10 +394,6 @@
             gl.enable(gl.BLEND);
             gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
 
-            // ────────────────────────────────────────────────
-            // Helpers: thick line (unchanged) + new quad node
-            // ────────────────────────────────────────────────
-
             function addThickLineVerts(x1, y1, x2, y2, thickness, alpha, outPositions, outAlphas) {
                 const dx = x2 - x1;
                 const dy = y2 - y1;
@@ -414,35 +419,21 @@
                 for (let i = 0; i < 6; i++) outAlphas.push(alpha);
             }
 
-            function addNodeQuad(x, y, radiusPx, r, g, b, a, outPositions, outColors) {
-                const rPx = radiusPx * dpr;  // device pixels
+            function addNodeQuad(x, y, radiusPx, r, g, b, a, outPositions, outColors, outCenters) {
+                const rPx = radiusPx * dpr * 1.6; // margin for antialias/softness
 
-                // Four corners of square (axis-aligned for simplicity – looks good enough for glowy nodes)
                 const left   = x - rPx;
                 const right  = x + rPx;
                 const top    = y - rPx;
                 const bottom = y + rPx;
 
-                // Two triangles: top-left → top-right → bottom-right    and   top-left → bottom-right → bottom-left
-                // Vertex 1
-                outPositions.push(left,  top);
-                outColors.push(r, g, b, a);
-                // Vertex 2
-                outPositions.push(right, top);
-                outColors.push(r, g, b, a);
-                // Vertex 3
-                outPositions.push(right, bottom);
-                outColors.push(r, g, b, a);
+                outPositions.push(left, top, right, top, right, bottom);
+                outPositions.push(left, top, right, bottom, left, bottom);
 
-                // Vertex 4 = Vertex 1
-                outPositions.push(left,  top);
-                outColors.push(r, g, b, a);
-                // Vertex 5 = Vertex 3
-                outPositions.push(right, bottom);
-                outColors.push(r, g, b, a);
-                // Vertex 6
-                outPositions.push(left,  bottom);
-                outColors.push(r, g, b, a);
+                for (let i = 0; i < 6; i++) {
+                    outColors.push(r, g, b, a);
+                    outCenters.push(x, y);
+                }
             }
 
             let lastTime = 0;
@@ -511,11 +502,10 @@
                     if (p.y < 0 || p.y > window.innerHeight) p.vy *= -1;
                 });
 
-                // ────────────────────────────────────────────────
-                // Nodes as quads (replaces POINTS)
-                // ────────────────────────────────────────────────
+                // Nodes (SDF circles)
                 const nodePositions = [];
                 const nodeColors = [];
+                const nodeCenters = [];
 
                 particles.forEach(p => {
                     const h = p.hue / 360;
@@ -526,33 +516,35 @@
                     const b = hue2rgb(p_, q, h - 1/3);
                     const a = 1.0;
 
-                    addNodeQuad(
-                        p.x, p.y,
-                        NODE_RADIUS_PX,
-                        r, g, b, a,
-                        nodePositions,
-                        nodeColors
-                    );
+                    addNodeQuad(p.x, p.y, NODE_RADIUS_PX, r, g, b, a, nodePositions, nodeColors, nodeCenters);
                 });
 
-                if (nodePositions.length > 0) {
+                if (nodePositions.length > 0 && particleProgram) {
                     gl.useProgram(particleProgram);
                     gl.uniformMatrix3fv(gl.getUniformLocation(particleProgram, 'uProjection'), false, getProjection());
 
                     gl.bindBuffer(gl.ARRAY_BUFFER, particlePositionBuffer);
                     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(nodePositions), gl.DYNAMIC_DRAW);
-                    gl.enableVertexAttribArray(0);
-                    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+                    const posLoc = gl.getAttribLocation(particleProgram, 'aPosition');
+                    gl.enableVertexAttribArray(posLoc);
+                    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
 
                     gl.bindBuffer(gl.ARRAY_BUFFER, particleColorBuffer);
                     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(nodeColors), gl.DYNAMIC_DRAW);
-                    gl.enableVertexAttribArray(1);
-                    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+                    const colLoc = gl.getAttribLocation(particleProgram, 'aColor');
+                    gl.enableVertexAttribArray(colLoc);
+                    gl.vertexAttribPointer(colLoc, 4, gl.FLOAT, false, 0, 0);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, particleCenterBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(nodeCenters), gl.DYNAMIC_DRAW);
+                    const cenLoc = gl.getAttribLocation(particleProgram, 'aCenter');
+                    gl.enableVertexAttribArray(cenLoc);
+                    gl.vertexAttribPointer(cenLoc, 2, gl.FLOAT, false, 0, 0);
 
                     gl.drawArrays(gl.TRIANGLES, 0, nodePositions.length / 2);
                 }
 
-                // Static + mouse lines (unchanged)
+                // Static + mouse lines
                 const maxDist = isMobile ? CONNECTION_DISTANCE_MOBILE : CONNECTION_DISTANCE_DESKTOP;
                 const linePositions = [];
                 const lineAlphas = [];
@@ -562,14 +554,8 @@
                         const d = Math.hypot(particles[i].x - particles[j].x, particles[i].y - particles[j].y);
                         if (d < maxDist) {
                             const alpha = (1 - d / maxDist) ** 1.3 * STATIC_LINE_ALPHA_BASE;
-                            addThickLineVerts(
-                                particles[i].x, particles[i].y,
-                                particles[j].x, particles[j].y,
-                                LINE_THICKNESS_PX * dpr,
-                                alpha,
-                                linePositions,
-                                lineAlphas
-                            );
+                            addThickLineVerts(particles[i].x, particles[i].y, particles[j].x, particles[j].y,
+                                              LINE_THICKNESS_PX * dpr, alpha, linePositions, lineAlphas);
                         }
                     }
                 }
@@ -579,19 +565,13 @@
                         const d = Math.hypot(mouseX - particles[i].x, mouseY - particles[i].y);
                         if (d < maxDist) {
                             const alpha = (1 - d / maxDist) ** 1.3 * MOUSE_LINE_ALPHA_BASE;
-                            addThickLineVerts(
-                                mouseX, mouseY,
-                                particles[i].x, particles[i].y,
-                                LINE_THICKNESS_PX * dpr,
-                                alpha,
-                                linePositions,
-                                lineAlphas
-                            );
+                            addThickLineVerts(mouseX, mouseY, particles[i].x, particles[i].y,
+                                              LINE_THICKNESS_PX * dpr, alpha, linePositions, lineAlphas);
                         }
                     }
                 }
 
-                if (linePositions.length > 0) {
+                if (linePositions.length > 0 && lineProgram) {
                     gl.useProgram(lineProgram);
                     gl.uniformMatrix3fv(gl.getUniformLocation(lineProgram, 'uProjection'), false, getProjection());
                     gl.uniform4f(gl.getUniformLocation(lineProgram, 'uColor'), 0.7, 0.1, 0.9, 1.0);
@@ -609,7 +589,7 @@
                     gl.drawArrays(gl.TRIANGLES, 0, linePositions.length / 2);
                 }
 
-                // Flood propagation (unchanged except heads are still points for simplicity)
+                // Flood lines & heads
                 let completed = [];
                 signals = signals.filter(sig => {
                     const elapsed = time - sig.start_time;
@@ -627,9 +607,9 @@
 
                 const floodPositions = [];
                 const floodAlphas = [];
-                const headsPos = [];
-                const headsColor = [];
-                const headsSize = [];
+                const headPositions = [];
+                const headColors = [];
+                const headCenters = [];
 
                 signals.forEach(sig => {
                     let progress = (time - sig.start_time) / sig.duration;
@@ -645,29 +625,19 @@
 
                     const baseAlpha = 0.9 + 0.1 * Math.sin(time * FLOOD_LINE_PULSE_SPEED + sig.dist * 0.02);
 
-                    addThickLineVerts(
-                        fx, fy, px, py,
-                        LINE_THICKNESS_PX * dpr,
-                        baseAlpha,
-                        floodPositions,
-                        floodAlphas
-                    );
+                    addThickLineVerts(fx, fy, px, py, LINE_THICKNESS_PX * dpr, baseAlpha, floodPositions, floodAlphas);
 
-                    headsPos.push(px, py);
                     const headBrightness = 0.9 + 0.1 * Math.sin(time * FLOOD_HEAD_PULSE_SPEED + sig.dist * 0.015);
-                    headsColor.push(0, 1, 1, headBrightness);
-                    headsSize.push(FLOOD_HEAD_SIZE * dpr);
+                    addNodeQuad(px, py, FLOOD_HEAD_SIZE / 2, 0, 1, 1, headBrightness,
+                                headPositions, headColors, headCenters);
                 });
 
-                if (floodPositions.length > 0) {
+                if (floodPositions.length > 0 && lineProgram) {
                     gl.useProgram(lineProgram);
                     gl.uniformMatrix3fv(gl.getUniformLocation(lineProgram, 'uProjection'), false, getProjection());
                     const pulse = 0.3 * Math.sin(time * FLOOD_LINE_PULSE_SPEED);
                     gl.uniform4f(gl.getUniformLocation(lineProgram, 'uColor'), 
-                        0.1 + pulse,
-                        0.9 + pulse*1.2,
-                        1.0 + pulse*0.8,
-                        1.0);
+                                 0.1 + pulse, 0.9 + pulse*1.2, 1.0 + pulse*0.8, 1.0);
 
                     gl.bindBuffer(gl.ARRAY_BUFFER, linePositionBuffer);
                     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(floodPositions), gl.DYNAMIC_DRAW);
@@ -682,32 +652,38 @@
                     gl.drawArrays(gl.TRIANGLES, 0, floodPositions.length / 2);
                 }
 
-                // Flood heads (still POINTS – small & simple)
-                if (headsPos.length > 0) {
+                if (headPositions.length > 0 && particleProgram) {
                     gl.useProgram(particleProgram);
                     gl.uniformMatrix3fv(gl.getUniformLocation(particleProgram, 'uProjection'), false, getProjection());
 
                     gl.bindBuffer(gl.ARRAY_BUFFER, particlePositionBuffer);
-                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(headsPos), gl.DYNAMIC_DRAW);
-                    gl.enableVertexAttribArray(0);
-                    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(headPositions), gl.DYNAMIC_DRAW);
+                    const posLoc = gl.getAttribLocation(particleProgram, 'aPosition');
+                    gl.enableVertexAttribArray(posLoc);
+                    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
 
                     gl.bindBuffer(gl.ARRAY_BUFFER, particleColorBuffer);
-                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(headsColor), gl.DYNAMIC_DRAW);
-                    gl.enableVertexAttribArray(1);
-                    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(headColors), gl.DYNAMIC_DRAW);
+                    const colLoc = gl.getAttribLocation(particleProgram, 'aColor');
+                    gl.enableVertexAttribArray(colLoc);
+                    gl.vertexAttribPointer(colLoc, 4, gl.FLOAT, false, 0, 0);
 
-                    // Fake small point size using uniform or just use tiny quads if needed later
-                    // For now, we use old point logic here (small size so inconsistency less noticeable)
-                    const headSizeData = new Float32Array(headsSize);
-                    const headSizeBuffer = gl.createBuffer();
-                    gl.bindBuffer(gl.ARRAY_BUFFER, headSizeBuffer);
-                    gl.bufferData(gl.ARRAY_BUFFER, headSizeData, gl.DYNAMIC_DRAW);
-                    gl.enableVertexAttribArray(2);
-                    gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 0, 0);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, particleCenterBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(headCenters), gl.DYNAMIC_DRAW);
+                    const cenLoc = gl.getAttribLocation(particleProgram, 'aCenter');
+                    gl.enableVertexAttribArray(cenLoc);
+                    gl.vertexAttribPointer(cenLoc, 2, gl.FLOAT, false, 0, 0);
 
-                    gl.drawArrays(gl.POINTS, 0, headsPos.length / 2);
+                    gl.drawArrays(gl.TRIANGLES, 0, headPositions.length / 2);
                 }
+            }
+
+            function getProjection() {
+                return new Float32Array([
+                    2 / window.innerWidth, 0, 0,
+                    0, -2 / window.innerHeight, 0,
+                    -1, 1, 1
+                ]);
             }
 
             function hue2rgb(p, q, t) {
@@ -718,6 +694,10 @@
                 if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
                 return p;
             }
+
+            // Initial setup
+            resize();
+            window.addEventListener('resize', resize);
 
             animate(0);
         })();
