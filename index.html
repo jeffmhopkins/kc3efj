@@ -204,6 +204,14 @@
             const baseDensityDesktop = baseCountDesktop / (baseWidth * baseHeight);
             const baseDensityMobile = baseCountMobile / (baseWidth * baseHeight);
 
+            // ────────────────────────────────────────────────
+            // Line width handling for high-DPI screens
+            // ────────────────────────────────────────────────
+            function updateLineWidth() {
+                const lineWidth = Math.max(1.0, dpr * 1.15);  // 1.15–1.3 usually gives good balance
+                gl.lineWidth(lineWidth);
+            }
+
             function resize() {
                 dpr = window.devicePixelRatio || 1;
                 width = canvas.width = window.innerWidth * dpr;
@@ -217,10 +225,16 @@
                 const count = Math.max(30, Math.min(400, Math.round(density * (window.innerWidth * window.innerHeight))));
 
                 initParticles(count);
+
+                // Important: re-apply line width after DPR or size change
+                updateLineWidth();
             }
 
             window.addEventListener('resize', resize);
             resize();
+
+            // Initial line width (called after first resize)
+            updateLineWidth();
 
             // ────────────────────────────────────────────────
             // Shaders
@@ -322,18 +336,15 @@
 
             function initParticles(count) {
                 particles = Array.from({length: count}, () => {
-                    // 0 = pure cyan path → 1 = pure magenta path
                     const t = Math.random();
-                    // Hue: 180° (cyan) → 300° (magenta), but we bias toward ends + white-tinted middle
                     let hue;
                     if (t < 0.4) {
-                        hue = 180 + (t / 0.4) * 30;          // 180° → ~210° (cyan → cyan-teal)
+                        hue = 180 + (t / 0.4) * 30;
                     } else if (t < 0.6) {
-                        hue = 240 + (t - 0.4) / 0.2 * 60;    // 240° → 300° jump (avoid deep blue)
+                        hue = 240 + (t - 0.4) / 0.2 * 60;
                     } else {
-                        hue = 270 + ((t - 0.6) / 0.4) * 30;  // 270° → 300° (magenta zone)
+                        hue = 270 + ((t - 0.6) / 0.4) * 30;
                     }
-                    // Higher saturation near ends, lower in middle → "whiter" versions
                     const saturation = 0.5 + Math.abs(t - 0.5) * 1.0;
                     return {
                         x: Math.random() * window.innerWidth,
@@ -427,7 +438,7 @@
 
                     const h = p.hue / 360;
                     const q = p.sat;
-                    const p_ = 0.0; // max brightness
+                    const p_ = 0.0;
                     colData[i*4]   = hue2rgb(p_, q, h + 1/3);
                     colData[i*4+1] = hue2rgb(p_, q, h);
                     colData[i*4+2] = hue2rgb(p_, q, h - 1/3);
