@@ -47,6 +47,10 @@ const LETTER_GLOW_MAX_BLUR         = 18;
 const LETTER_GLOW_MAX_SIZE_MULT    = 2.4;
 const LETTER_GLOW_COLOR            = 'rgba(0, 255, 240, 0.95)';
 
+  let lastTime = 0;
+const fpsLimit = isMobile ? 20 : 40; // or 20 for very low-end
+const frameInterval = 1000 / fpsLimit;
+
 class RandomParticle {
   constructor() {
     this.reset();
@@ -491,23 +495,27 @@ function drawFloodWaves() {
 }
 
 function loop() {
-  ctx.clearRect(0, 0, w, h);
-  particles.forEach(p => { p.update(); p.draw(); });
-  drawDynamicConnections();
-  drawPermanentOutlines();
-  drawMouseConnections();
+  if (!lastTime) lastTime = timestamp;
+  const elapsed = timestamp - lastTime;
 
-  if (floodActive) {
-    const elapsed = Date.now() - floodStartTime;
-    if (elapsed > FLOOD_DURATION) {
-      floodActive = false;
-      floodGraph = null;
-      postFloodStartTime = Date.now();
-    } else {
-      drawFloodWaves();
+  if (elapsed > frameInterval) {
+    ctx.clearRect(0, 0, w, h);
+    particles.forEach(p => { p.update(); p.draw(); });
+    drawDynamicConnections();
+    drawPermanentOutlines();
+    drawMouseConnections();
+  
+    if (floodActive) {
+      const elapsed = Date.now() - floodStartTime;
+      if (elapsed > FLOOD_DURATION) {
+        floodActive = false;
+        floodGraph = null;
+        postFloodStartTime = Date.now();
+      } else {
+        drawFloodWaves();
+      }
     }
   }
-
   requestAnimationFrame(loop);
 }
 
