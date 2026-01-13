@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <title>Synth Nodes • KC3EFJ + Random</title>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
@@ -17,6 +19,8 @@
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
+const isMobile = /Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+                 window.innerWidth < 768;
 let w, h;
 let particles = [];
 let letterGroups = [];
@@ -47,7 +51,7 @@ const LETTER_GLOW_MAX_BLUR         = 18;
 const LETTER_GLOW_MAX_SIZE_MULT    = 2.4;
 const LETTER_GLOW_COLOR            = 'rgba(0, 255, 240, 0.95)';
 
-  let lastTime = 0;
+let lastTime = 0;
 const fpsLimit = isMobile ? 20 : 40; // or 20 for very low-end
 const frameInterval = 1000 / fpsLimit;
 
@@ -156,7 +160,6 @@ class LetterParticle {
       const nodeReachTime = floodStartTime + this.floodDist * FLOOD_PULSE_DELAY;
       const timeSinceReach = now - nodeReachTime;
 
-      // Only start strong cyan glow after a short delay per node
       if (timeSinceReach >= LETTER_GLOW_ACTIVATION_DELAY) {
         const adjustedT = timeSinceReach - LETTER_GLOW_ACTIVATION_DELAY;
 
@@ -206,8 +209,6 @@ class LetterParticle {
   }
 }
 
-// ─── initParticles, resize, event listeners, startFlood, drawDynamicConnections, drawMouseConnections unchanged from previous version ───
-
 function initParticles() {
   particles = [];
   letterGroups = [];
@@ -240,13 +241,7 @@ function initParticles() {
   const centerY = h / 2;
 
   const letters = {
-    K: [
-  [0,0], [2,0],
-  [0,1], [2,1],
-  [0,2], [1,2],
-  [0,3], [2,3],
-  [0,4], [2,4]
-],
+    K: [[0,0],[2,0],[0,1],[2,1],[0,2],[1,2],[0,3],[2,3],[0,4],[2,4]],
     C: [[1,0],[2,0],[0,1],[0,2],[0,3],[1,4],[2,4]],
     '3': [[0,0],[1,0],[2,1],[1,2],[2,2],[2,3],[0,4],[1,4]],
     E: [[0,0],[1,0],[2,0],[0,1],[0,2],[1,2],[0,3],[0,4],[1,4],[2,4]],
@@ -494,7 +489,7 @@ function drawFloodWaves() {
   }
 }
 
-function loop() {
+function loop(timestamp) {
   if (!lastTime) lastTime = timestamp;
   const elapsed = timestamp - lastTime;
 
@@ -515,6 +510,7 @@ function loop() {
         drawFloodWaves();
       }
     }
+    lastTime = timestamp - (elapsed % frameInterval);
   }
   requestAnimationFrame(loop);
 }
