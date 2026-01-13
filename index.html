@@ -5,29 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KC3EFJ</title>
     <style>
+        * { box-sizing: border-box; margin:0; padding:0; }
         body {
-            margin: 0;
-            padding: 0;
             overflow: hidden;
-            background: linear-gradient(to bottom, #000, #0a0a23);
-            font-family: 'Courier New', monospace;
-            color: #fff;
+            background: linear-gradient(to bottom, #0a0015, #000814);
+            font-family: 'Courier New', Courier, monospace;
+            color: #e0f7ff;
+            height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
             position: relative;
+            touch-action: manipulation;
         }
-
         canvas {
             position: absolute;
-            top: 0;
-            left: 0;
+            inset: 0;
             width: 100%;
             height: 100%;
             z-index: 1;
         }
-
         .content {
             z-index: 2;
             text-align: center;
@@ -41,149 +38,315 @@
             justify-content: center;
             min-height: 60vh;
         }
-
         .callsign {
-            font-size: 4rem;
-            letter-spacing: 0.5rem;
-            text-shadow: 0 0 10px #ff00ff, 0 0 20px #00ffff, 0 0 30px #ff00ff;
-            transition: transform 0.3s ease;
+            font-size: clamp(3rem, 12vw, 6rem);
+            letter-spacing: 0.6rem;
+            font-weight: bold;
+            text-shadow: 
+                0 0 10px #ff00ff,
+                0 0 25px #00ffff,
+                0 0 40px #ff00ff;
+            margin: 0;
+            transition: transform 0.4s ease, text-shadow 0.4s ease;
         }
-
-        .callsign:hover {
-            transform: scale(1.05);
+        .callsign:hover, .callsign:active {
+            transform: scale(1.04);
+            text-shadow: 
+                0 0 20px #ff00ff,
+                0 0 40px #00ffff,
+                0 0 60px #ff00ff;
         }
-
         .blurb {
             display: none;
-            margin-top: 20px;
-            padding: 20px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
-            backdrop-filter: blur(10px);
-            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            max-width: 80%;
-            font-size: 1.2rem;
-            text-shadow: 0 0 5px #00ffff;
-            animation: fadeIn 0.5s ease;
+            margin: 2rem auto 1rem;
+            padding: 1.8rem 2rem;
+            background: rgba(10, 25, 50, 0.35);
+            border-radius: 16px;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(0, 255, 255, 0.18);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            max-width: 600px;
+            width: 90%;
+            font-size: clamp(1rem, 3.5vw, 1.25rem);
+            line-height: 1.6;
+            text-align: center;
+            text-shadow: 0 0 6px #00ffff;
+            animation: fadeInScale 0.6s ease-out;
         }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-20px); }
-            to { opacity: 1; transform: translateY(0); }
+        .blurb strong {
+            color: #00ffff;
+            text-shadow: 0 0 10px #00ffff;
         }
-
+        @keyframes fadeInScale {
+            from { opacity: 0; transform: scale(0.92) translateY(20px); }
+            to   { opacity: 1; transform: scale(1) translateY(0); }
+        }
         @media (max-width: 600px) {
-            .callsign {
-                font-size: 2.5rem;
-                letter-spacing: 0.3rem;
-            }
-            .blurb {
-                font-size: 1rem;
-                padding: 15px;
-            }
+            .callsign { letter-spacing: 0.4rem; }
+            .blurb { padding: 1.4rem 1.6rem; margin: 1.5rem auto 1rem; }
         }
     </style>
 </head>
 <body>
     <canvas id="canvas"></canvas>
-    <div class="content" onclick="toggleBlurb()">
+
+    <div class="content" id="content">
         <div class="callsign">KC3EFJ</div>
         <div class="blurb" id="blurb">
-            Amateur Radio Operator based in Cocoa, Florida. <br>
-            Callsign: KC3EFJ <br>
-            Interests: HF DXing, Digital Modes, Emergency Communications. <br>
-            Contact: @jeffmhopkins on X.
+            Amateur Radio Operator based in <strong>Cocoa, Florida</strong>.<br><br>
+            Callsign: <strong>KC3EFJ</strong><br>
+            Interests: HF DXing, Digital Modes, Emergency Communications.<br><br>
+            Contact: <strong>@jeffmhopkins</strong> on X.
         </div>
     </div>
 
     <script>
-        function toggleBlurb() {
-            const blurb = document.getElementById('blurb');
-            blurb.style.display = blurb.style.display === 'block' ? 'none' : 'block';
-        }
-
-        // Synthwave node animation
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        let width = canvas.width = window.innerWidth;
-        let height = canvas.height = window.innerHeight;
-
-        window.addEventListener('resize', () => {
-            width = canvas.width = window.innerWidth;
-            height = canvas.height = window.innerHeight;
-            initParticles();
-        });
-
-        class Particle {
-            constructor() {
-                this.x = Math.random() * width;
-                this.y = Math.random() * height;
-                this.vx = (Math.random() - 0.5) * 0.5;
-                this.vy = (Math.random() - 0.5) * 0.5;
-                this.radius = Math.random() * 2 + 1;
-                this.color = ['#ff00ff', '#00ffff', '#ff00aa', '#00ffaa'][Math.floor(Math.random() * 4)];
+        (function() {
+            // Toggle function (no longer needs to be global)
+            function toggleBlurb() {
+                const blurb = document.getElementById('blurb');
+                blurb.style.display = blurb.style.display === 'block' ? 'none' : 'block';
             }
 
-            update() {
-                this.x += this.vx;
-                this.y += this.vy;
+            // Add click/touch listeners from JS instead of inline attributes
+            const content = document.getElementById('content');
+            content.addEventListener('click', toggleBlurb);
+            content.addEventListener('touchstart', toggleBlurb, { passive: true });
 
-                if (this.x < 0 || this.x > width) this.vx *= -1;
-                if (this.y < 0 || this.y > height) this.vy *= -1;
+            const canvas = document.getElementById('canvas');
+            const gl = canvas.getContext('webgl');
+            if (!gl) {
+                console.error('WebGL not supported');
+                const msg = document.createElement('div');
+                msg.style.cssText = 'position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#ff3366; font-size:1.5rem; text-align:center; padding:2rem; background:rgba(0,0,0,0.7); border-radius:12px; z-index:10;';
+                msg.textContent = 'WebGL is not supported in this browser.';
+                document.body.appendChild(msg);
+                return;
             }
 
-            draw() {
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-                ctx.fillStyle = this.color;
-                ctx.shadowBlur = 10;
-                ctx.shadowColor = this.color;
-                ctx.fill();
+            let width, height, dpr, particles = [], isMobile = false;
+
+            function resize() {
+                dpr = window.devicePixelRatio || 1;
+                width = canvas.width = window.innerWidth * dpr;
+                height = canvas.height = window.innerHeight * dpr;
+                canvas.style.width = window.innerWidth + 'px';
+                canvas.style.height = window.innerHeight + 'px';
+                gl.viewport(0, 0, width, height);
+
+                isMobile = window.innerWidth <= 768 || ('ontouchstart' in window);
+                initParticles();
             }
-        }
 
-        let particles = [];
-        const numParticles = 50; // Limited for mobile performance
+            window.addEventListener('resize', resize);
+            resize();
 
-        function initParticles() {
-            particles = [];
-            for (let i = 0; i < numParticles; i++) {
-                particles.push(new Particle());
+            // ── Shaders ──
+            const vsSource = `
+                attribute vec2 aPosition;
+                attribute vec4 aColor;
+                varying vec4 vColor;
+                uniform mat3 uProjection;
+                void main() {
+                    vec3 pos3 = uProjection * vec3(aPosition, 1.0);
+                    gl_Position = vec4(pos3.xy, 0.0, 1.0);
+                    vColor = aColor;
+                    gl_PointSize = 6.0;
+                }
+            `;
+
+            const fsSource = `
+                precision mediump float;
+                varying vec4 vColor;
+                void main() {
+                    gl_FragColor = vColor;
+                }
+            `;
+
+            const lineVsSource = `
+                attribute vec2 aPosition;
+                attribute float aAlpha;
+                varying float vAlpha;
+                uniform mat3 uProjection;
+                void main() {
+                    vec3 pos3 = uProjection * vec3(aPosition, 1.0);
+                    gl_Position = vec4(pos3.xy, 0.0, 1.0);
+                    vAlpha = aAlpha;
+                }
+            `;
+
+            const lineFsSource = `
+                precision mediump float;
+                varying float vAlpha;
+                uniform vec4 uColor;
+                void main() {
+                    gl_FragColor = uColor * vec4(1.0, 1.0, 1.0, vAlpha);
+                }
+            `;
+
+            function createShader(type, source) {
+                const shader = gl.createShader(type);
+                gl.shaderSource(shader, source);
+                gl.compileShader(shader);
+                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                    console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+                    gl.deleteShader(shader);
+                    return null;
+                }
+                return shader;
             }
-        }
 
-        initParticles();
+            function createProgram(vs, fs) {
+                const program = gl.createProgram();
+                gl.attachShader(program, vs);
+                gl.attachShader(program, fs);
+                gl.linkProgram(program);
+                if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                    console.error('Program link error:', gl.getProgramInfoLog(program));
+                    gl.deleteProgram(program);
+                    return null;
+                }
+                return program;
+            }
 
-        function animate() {
-            requestAnimationFrame(animate);
-            ctx.clearRect(0, 0, width, height);
+            const particleProgram = createProgram(
+                createShader(gl.VERTEX_SHADER, vsSource),
+                createShader(gl.FRAGMENT_SHADER, fsSource)
+            );
 
-            particles.forEach(p => {
-                p.update();
-                p.draw();
-            });
+            const lineProgram = createProgram(
+                createShader(gl.VERTEX_SHADER, lineVsSource),
+                createShader(gl.FRAGMENT_SHADER, lineFsSource)
+            );
 
-            // Connect nearby particles
-            for (let i = 0; i < particles.length; i++) {
-                for (let j = i + 1; j < particles.length; j++) {
-                    const dx = particles[i].x - particles[j].x;
-                    const dy = particles[i].y - particles[j].y;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
+            const particlePositionBuffer = gl.createBuffer();
+            const particleColorBuffer    = gl.createBuffer();
+            const linePositionBuffer     = gl.createBuffer();
+            const lineAlphaBuffer        = gl.createBuffer();
 
-                    if (dist < 150) { // Adjust distance for connections
-                        ctx.beginPath();
-                        ctx.moveTo(particles[i].x, particles[i].y);
-                        ctx.lineTo(particles[j].x, particles[j].y);
-                        ctx.strokeStyle = `rgba(255, 0, 255, ${1 - dist / 150})`;
-                        ctx.lineWidth = 0.5;
-                        ctx.stroke();
+            function getProjection() {
+                return new Float32Array([
+                    2 / window.innerWidth, 0, 0,
+                    0, -2 / window.innerHeight, 0,
+                    -1, 1, 1
+                ]);
+            }
+
+            function initParticles() {
+                const count = isMobile ? 35 : 60;
+                particles = Array.from({length: count}, () => ({
+                    x: Math.random() * window.innerWidth,
+                    y: Math.random() * window.innerHeight,
+                    vx: (Math.random() - 0.5) * (isMobile ? 0.4 : 0.6),
+                    vy: (Math.random() - 0.5) * (isMobile ? 0.4 : 0.6),
+                    hue: Math.random() * 60 + 180
+                }));
+            }
+
+            gl.enable(gl.BLEND);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+
+            let lastTime = 0;
+            const targetFPS = isMobile ? 1000/40 : 1000/60;
+
+            function animate(time) {
+                requestAnimationFrame(animate);
+                if (!lastTime) lastTime = time;
+                const delta = time - lastTime;
+                if (delta < targetFPS) return;
+                lastTime = time - (delta % targetFPS);
+
+                gl.clearColor(0, 0, 20/255, 0.08);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+
+                particles.forEach(p => {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    if (p.x < 0 || p.x > window.innerWidth) p.vx *= -1;
+                    if (p.y < 0 || p.y > window.innerHeight) p.vy *= -1;
+                });
+
+                const posData = new Float32Array(particles.length * 2);
+                const colData = new Float32Array(particles.length * 4);
+
+                particles.forEach((p, i) => {
+                    posData[i*2]   = p.x;
+                    posData[i*2+1] = p.y;
+
+                    const h = p.hue / 360;
+                    const q = 0.7 < 0.5 ? 0.7 * 1.7 : 0.7 + 1 - 0.7;
+                    const pp = 1.4 - q;
+                    colData[i*4]   = hue2rgb(pp, q, h + 1/3);
+                    colData[i*4+1] = hue2rgb(pp, q, h);
+                    colData[i*4+2] = hue2rgb(pp, q, h - 1/3);
+                    colData[i*4+3] = 1;
+                });
+
+                gl.useProgram(particleProgram);
+                gl.uniformMatrix3fv(gl.getUniformLocation(particleProgram, 'uProjection'), false, getProjection());
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, particlePositionBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, posData, gl.DYNAMIC_DRAW);
+                gl.enableVertexAttribArray(0);
+                gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, particleColorBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, colData, gl.DYNAMIC_DRAW);
+                gl.enableVertexAttribArray(1);
+                gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+
+                gl.drawArrays(gl.POINTS, 0, particles.length);
+
+                const maxDist = isMobile ? 110 : 160;
+                const lines = [];
+                const alphas = [];
+
+                for (let i = 0; i < particles.length; i++) {
+                    for (let j = i + 1; j < particles.length; j++) {
+                        const dx = particles[i].x - particles[j].x;
+                        const dy = particles[i].y - particles[j].y;
+                        const d2 = dx*dx + dy*dy;
+                        const maxD2 = maxDist * maxDist;
+                        if (d2 < maxD2) {
+                            const dist = Math.sqrt(d2);
+                            const alpha = (1 - dist / maxDist) ** 1.2 * 0.6;
+                            lines.push(particles[i].x, particles[i].y, particles[j].x, particles[j].y);
+                            alphas.push(alpha, alpha);
+                        }
                     }
                 }
-            }
-        }
 
-        animate();
+                if (lines.length > 0) {
+                    gl.useProgram(lineProgram);
+                    gl.uniformMatrix3fv(gl.getUniformLocation(lineProgram, 'uProjection'), false, getProjection());
+                    gl.uniform4f(gl.getUniformLocation(lineProgram, 'uColor'), 0.9, 0.2, 1.0, 1.0);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, linePositionBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lines), gl.DYNAMIC_DRAW);
+                    gl.enableVertexAttribArray(0);
+                    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, lineAlphaBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(alphas), gl.DYNAMIC_DRAW);
+                    gl.enableVertexAttribArray(1);
+                    gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 0, 0);
+
+                    gl.drawArrays(gl.LINES, 0, lines.length / 2);
+                }
+            }
+
+            function hue2rgb(p, q, t) {
+                if (t < 0) t += 1;
+                if (t > 1) t -= 1;
+                if (t < 1/6) return p + (q - p) * 6 * t;
+                if (t < 1/2) return q;
+                if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+                return p;
+            }
+
+            animate(0);
+        })();
     </script>
 </body>
 </html>
