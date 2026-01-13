@@ -5,18 +5,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KC3EFJ</title>
     <style>
-        * { box-sizing: border-box; margin:0; padding:0; }
-        body {
+        html, body {
+            height: 100dvh;
+            margin: 0;
+            padding: 0;
             overflow: hidden;
+        }
+        body {
             background: linear-gradient(to bottom, #0a0015, #000814);
             font-family: 'Courier New', Courier, monospace;
             color: #e0f7ff;
-            height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
             position: relative;
             touch-action: manipulation;
+            cursor: default;                          /* normal arrow everywhere by default */
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* Pointer cursor only on interactive elements */
+        .callsign-container,
+        .callsign {
+            cursor: pointer;
         }
         canvas {
             position: absolute;
@@ -25,18 +35,25 @@
             height: 100%;
             z-index: 1;
         }
-        .content {
+        .content-wrapper {
             z-index: 2;
-            text-align: center;
-            cursor: pointer;
+            position: relative;
             width: 100%;
             max-width: 90vw;
             padding: 20px;
+            text-align: center;
+            min-height: 60dvh;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-height: 60vh;
+        }
+        .callsign-container {
+            transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+            will-change: transform;
+        }
+        .callsign-container.expanded {
+            transform: translateY(-240px);
         }
         .callsign {
             font-size: clamp(3rem, 12vw, 6rem);
@@ -57,62 +74,99 @@
                 0 0 60px #ff00ff;
         }
         .blurb {
-            display: none;
-            margin: 2rem auto 1rem;
-            padding: 1.8rem 2rem;
-            background: rgba(10, 25, 50, 0.35);
-            border-radius: 16px;
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(0, 255, 255, 0.18);
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-            max-width: 600px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) translateY(80px);
+            opacity: 0;
+            visibility: hidden;
             width: 90%;
-            font-size: clamp(1rem, 3.5vw, 1.25rem);
-            line-height: 1.6;
+            max-width: 600px;
+            padding: clamp(1rem, 4vw, 1.8rem) clamp(1.2rem, 5vw, 2rem);
+            background: rgba(10, 25, 50, 0.12);
+            border-radius: 16px;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(0, 255, 255, 0.15);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            font-size: clamp(0.9rem, 3.2vw, 1.25rem);
+            line-height: 1.5;
             text-align: center;
             text-shadow: 0 0 6px #00ffff;
-            animation: fadeInScale 0.6s ease-out;
+            transition: opacity 0.6s ease-out, transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+            will-change: opacity, transform;
+            pointer-events: auto;
+            user-select: text;
+            -webkit-user-select: text;
+            cursor: text;                                 /* text cursor for selection inside blurb */
+        }
+        .blurb.visible {
+            opacity: 1;
+            visibility: visible;
+            transform: translate(-50%, -50%) translateY(0);
         }
         .blurb strong {
             color: #00ffff;
             text-shadow: 0 0 10px #00ffff;
         }
-        @keyframes fadeInScale {
-            from { opacity: 0; transform: scale(0.92) translateY(20px); }
-            to   { opacity: 1; transform: scale(1) translateY(0); }
-        }
         @media (max-width: 600px) {
+            .callsign-container.expanded { transform: translateY(-180px); }
             .callsign { letter-spacing: 0.4rem; }
-            .blurb { padding: 1.4rem 1.6rem; margin: 1.5rem auto 1rem; }
+            .blurb { padding: clamp(0.9rem, 4vw, 1.4rem) clamp(1rem, 4.5vw, 1.6rem); }
+        }
+        @media (max-width: 400px) {
+            .blurb {
+                font-size: clamp(0.85rem, 3.8vw, 1rem);
+                padding: 0.8rem 1.2rem;
+            }
         }
     </style>
 </head>
 <body>
     <canvas id="canvas"></canvas>
 
-    <div class="content" id="content">
-        <div class="callsign">KC3EFJ</div>
+    <div class="content-wrapper" id="wrapper">
+        <div class="callsign-container" id="callsignContainer">
+            <div class="callsign" id="callsign">KC3EFJ</div>
+        </div>
         <div class="blurb" id="blurb">
-            Amateur Radio Operator based in <strong>Cocoa, Florida</strong>.<br><br>
+            Amateur Radio Operator<br>
+            Based in <strong>Port Saint John</strong> (Cocoa), Florida.<br><br>
             Callsign: <strong>KC3EFJ</strong><br>
-            Interests: HF DXing, Digital Modes, Emergency Communications.<br><br>
-            Contact: <strong>@jeffmhopkins</strong> on X.
+            Interests: Digital Modes, APRS, Meshtastic, Eurorack<br><br>
+            Contact: <strong>@jeffmhopkins</strong> on X<br>
+            Email: <strong>jeff.m.hopkins+kc3efj@gmail.com</strong>
         </div>
     </div>
 
     <script>
         (function() {
-            // Toggle function (no longer needs to be global)
-            function toggleBlurb() {
-                const blurb = document.getElementById('blurb');
-                blurb.style.display = blurb.style.display === 'block' ? 'none' : 'block';
+            const callsign = document.getElementById('callsign');
+            const callsignContainer = document.getElementById('callsignContainer');
+            const blurb = document.getElementById('blurb');
+
+            function toggleBlurb(e) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const isVisible = blurb.classList.contains('visible');
+
+                if (isVisible) {
+                    blurb.classList.remove('visible');
+                    callsignContainer.classList.remove('expanded');
+                } else {
+                    blurb.classList.add('visible');
+                    callsignContainer.classList.add('expanded');
+                }
             }
 
-            // Add click/touch listeners from JS instead of inline attributes
-            const content = document.getElementById('content');
-            content.addEventListener('click', toggleBlurb);
-            content.addEventListener('touchstart', toggleBlurb, { passive: true });
+            // Toggle only on direct callsign interaction
+            callsign.addEventListener('click', toggleBlurb);
+            callsign.addEventListener('touchstart', toggleBlurb, { passive: false });
+
+            // Prevent blurb events from bubbling
+            blurb.addEventListener('click', e => e.stopPropagation());
+            blurb.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
 
             const canvas = document.getElementById('canvas');
             const gl = canvas.getContext('webgl');
@@ -127,6 +181,13 @@
 
             let width, height, dpr, particles = [], isMobile = false;
 
+            const baseWidth = 1920;
+            const baseHeight = 1080;
+            const baseCountDesktop = 120;
+            const baseCountMobile = 70;
+            const baseDensityDesktop = baseCountDesktop / (baseWidth * baseHeight);
+            const baseDensityMobile = baseCountMobile / (baseWidth * baseHeight);
+
             function resize() {
                 dpr = window.devicePixelRatio || 1;
                 width = canvas.width = window.innerWidth * dpr;
@@ -136,13 +197,17 @@
                 gl.viewport(0, 0, width, height);
 
                 isMobile = window.innerWidth <= 768 || ('ontouchstart' in window);
-                initParticles();
+                const density = isMobile ? baseDensityMobile : baseDensityDesktop;
+                const targetCount = Math.round(density * (window.innerWidth * window.innerHeight));
+                const count = Math.max(30, Math.min(400, targetCount));
+
+                initParticles(count);
             }
 
             window.addEventListener('resize', resize);
             resize();
 
-            // ── Shaders ──
+            // Shaders (unchanged)
             const vsSource = `
                 attribute vec2 aPosition;
                 attribute vec4 aColor;
@@ -233,8 +298,7 @@
                 ]);
             }
 
-            function initParticles() {
-                const count = isMobile ? 35 : 60;
+            function initParticles(count) {
                 particles = Array.from({length: count}, () => ({
                     x: Math.random() * window.innerWidth,
                     y: Math.random() * window.innerHeight,
@@ -298,7 +362,7 @@
 
                 gl.drawArrays(gl.POINTS, 0, particles.length);
 
-                const maxDist = isMobile ? 110 : 160;
+                const maxDist = isMobile ? 110 * 1.333 : 160 * 1.333;
                 const lines = [];
                 const alphas = [];
 
