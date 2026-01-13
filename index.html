@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -157,55 +156,49 @@
     <script>
         (function() {
             // ────────────────────────────────────────────────
-            //  EASILY ADJUSTABLE SETTINGS – all the fun stuff is here!
+            //  EASILY ADJUSTABLE SETTINGS
             // ────────────────────────────────────────────────
 
             // Particle / Node settings
-            const BASE_NODE_COUNT_DESKTOP = 120;     // target nodes on 1920×1080 screen
-            const BASE_NODE_COUNT_MOBILE  = 120;     // target nodes on smaller screens
+            const BASE_NODE_COUNT_DESKTOP = 150;
+            const BASE_NODE_COUNT_MOBILE  = 150;
             const MIN_NODES               = 30;
             const MAX_NODES               = 400;
 
-            const NODE_SPEED_DESKTOP      = 0.6;     // pixels per frame
-            const NODE_SPEED_MOBILE       = 0.6;
+            const NODE_SPEED_DESKTOP      = 0.5;
+            const NODE_SPEED_MOBILE       = 0.5;
 
-            const NODE_SIZE_MIN           = 2;       // base size in pixels
-            const NODE_SIZE_VARIANCE      = 6;       // random +0 to this value
+            const NODE_RADIUS_PX          = 2.8;     // ← NEW: base radius in CSS pixels (tune 2.0–5.0)
+                                                     // diameter ≈ 5.6px on 1x, 11.2px on 2x retina, etc.
 
             // Connection line settings
-            const LINE_THICKNESS_DESKTOP_PX   = 1.01;   // base thickness on desktop (CSS pixels)
-            const LINE_THICKNESS_MOBILE_PX    = 1.01;    // thicker on mobile — tune this (1.8–3.0 recommended)
-            const CONNECTION_DISTANCE_DESKTOP = 230;    // max distance for static lines
-            const CONNECTION_DISTANCE_MOBILE  = 230;
+            const LINE_THICKNESS_PX       = 1.01;
+            const CONNECTION_DISTANCE_DESKTOP = 210;
+            const CONNECTION_DISTANCE_MOBILE  = 210;
 
-            const STATIC_LINE_ALPHA_BASE  = 0.6;    // how strong the dim purple lines are
-            const MOUSE_LINE_ALPHA_BASE   = 0.95;   // mouse hover lines
+            const STATIC_LINE_ALPHA_BASE  = 0.65;
+            const MOUSE_LINE_ALPHA_BASE   = 0.85;
 
-            // Color hue ranges for nodes (in degrees 0–360)
-            const HUE_RANGE_1_START       = 180;     // cyan-ish
+            // Color hue ranges (degrees)
+            const HUE_RANGE_1_START       = 180;
             const HUE_RANGE_1_WIDTH       = 30;
-            const HUE_RANGE_2_START       = 240;     // blue-purple
+            const HUE_RANGE_2_START       = 240;
             const HUE_RANGE_2_WIDTH       = 60;
-            const HUE_RANGE_3_START       = 270;     // purple-magenta
+            const HUE_RANGE_3_START       = 270;
             const HUE_RANGE_3_WIDTH       = 30;
 
-            const SATURATION_BASE         = 0.5;     // 0–1
-            const SATURATION_VARIANCE     = 1.0;     // how much it can vary around base
+            const SATURATION_BASE         = 0.5;
+            const SATURATION_VARIANCE     = 1.0;
 
-            // Flood / signal pulse settings
-            const SIGNAL_SPEED            = 150;     // pixels per second
-            const FLOOD_HEAD_SIZE         = 6;       // pixel size of the leading dot
-            const FLOOD_LINE_PULSE_SPEED  = 0.008;   // lower = slower pulse
+            // Flood / signal
+            const SIGNAL_SPEED            = 200;
+            const FLOOD_HEAD_SIZE         = 6;
+            const FLOOD_LINE_PULSE_SPEED  = 0.008;
             const FLOOD_HEAD_PULSE_SPEED  = 0.012;
 
-            // Background fade / trail effect
-            const CLEAR_ALPHA             = 0.09;    // higher = less trail / faster fade
+            const CLEAR_ALPHA             = 0.09;
+            const CLICK_SNAP_DISTANCE_SQ  = 60 * 60;
 
-            // Click-to-flood trigger sensitivity (squared distance)
-            const CLICK_SNAP_DISTANCE_SQ  = 60 * 60; // 60px radius
-
-            // ────────────────────────────────────────────────
-            //  END OF TUNABLE SETTINGS
             // ────────────────────────────────────────────────
 
             const callsign = document.getElementById('callsign');
@@ -273,18 +266,19 @@
             window.addEventListener('resize', resize);
             resize();
 
-            // Shaders (unchanged)
+            // ────────────────────────────────────────────────
+            // Shaders – particleProgram now used for quads (no gl_PointSize)
+            // ────────────────────────────────────────────────
+
             const vsSource = `
                 attribute vec2 aPosition;
                 attribute vec4 aColor;
-                attribute float aSize;
                 varying vec4 vColor;
                 uniform mat3 uProjection;
                 void main() {
                     vec3 pos3 = uProjection * vec3(aPosition, 1.0);
                     gl_Position = vec4(pos3.xy, 0.0, 1.0);
                     vColor = aColor;
-                    gl_PointSize = aSize;
                 }
             `;
 
@@ -292,8 +286,6 @@
                 precision mediump float;
                 varying vec4 vColor;
                 void main() {
-                    vec2 coord = gl_PointCoord - vec2(0.5);
-                    if (length(coord) > 0.5) discard;
                     gl_FragColor = vColor;
                 }
             `;
@@ -356,7 +348,6 @@
 
             const particlePositionBuffer = gl.createBuffer();
             const particleColorBuffer    = gl.createBuffer();
-            const particleSizeBuffer     = gl.createBuffer();
             const linePositionBuffer     = gl.createBuffer();
             const lineAlphaBuffer        = gl.createBuffer();
 
@@ -387,14 +378,17 @@
                         vx: (Math.random() - 0.5) * nodeSpeed,
                         vy: (Math.random() - 0.5) * nodeSpeed,
                         hue: hue,
-                        sat: saturation,
-                        visualSize: NODE_SIZE_MIN + Math.random() * NODE_SIZE_VARIANCE
+                        sat: saturation
                     };
                 });
             }
 
             gl.enable(gl.BLEND);
             gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+
+            // ────────────────────────────────────────────────
+            // Helpers: thick line (unchanged) + new quad node
+            // ────────────────────────────────────────────────
 
             function addThickLineVerts(x1, y1, x2, y2, thickness, alpha, outPositions, outAlphas) {
                 const dx = x2 - x1;
@@ -419,6 +413,37 @@
                 outPositions.push(ax, ay, cx, cy, dx_, dy_);
 
                 for (let i = 0; i < 6; i++) outAlphas.push(alpha);
+            }
+
+            function addNodeQuad(x, y, radiusPx, r, g, b, a, outPositions, outColors) {
+                const rPx = radiusPx * dpr;  // device pixels
+
+                // Four corners of square (axis-aligned for simplicity – looks good enough for glowy nodes)
+                const left   = x - rPx;
+                const right  = x + rPx;
+                const top    = y - rPx;
+                const bottom = y + rPx;
+
+                // Two triangles: top-left → top-right → bottom-right    and   top-left → bottom-right → bottom-left
+                // Vertex 1
+                outPositions.push(left,  top);
+                outColors.push(r, g, b, a);
+                // Vertex 2
+                outPositions.push(right, top);
+                outColors.push(r, g, b, a);
+                // Vertex 3
+                outPositions.push(right, bottom);
+                outColors.push(r, g, b, a);
+
+                // Vertex 4 = Vertex 1
+                outPositions.push(left,  top);
+                outColors.push(r, g, b, a);
+                // Vertex 5 = Vertex 3
+                outPositions.push(right, bottom);
+                outColors.push(r, g, b, a);
+                // Vertex 6
+                outPositions.push(left,  bottom);
+                outColors.push(r, g, b, a);
             }
 
             let lastTime = 0;
@@ -487,47 +512,51 @@
                     if (p.y < 0 || p.y > window.innerHeight) p.vy *= -1;
                 });
 
-                // Particles
-                const posData = new Float32Array(particles.length * 2);
-                const colData = new Float32Array(particles.length * 4);
-                const sizeData = new Float32Array(particles.length);
+                // ────────────────────────────────────────────────
+                // Nodes as quads (replaces POINTS)
+                // ────────────────────────────────────────────────
+                const nodePositions = [];
+                const nodeColors = [];
 
-                particles.forEach((p, i) => {
-                    posData[i*2]   = p.x;
-                    posData[i*2+1] = p.y;
-
+                particles.forEach(p => {
                     const h = p.hue / 360;
                     const q = p.sat;
                     const p_ = 0.0;
-                    colData[i*4]   = hue2rgb(p_, q, h + 1/3);
-                    colData[i*4+1] = hue2rgb(p_, q, h);
-                    colData[i*4+2] = hue2rgb(p_, q, h - 1/3);
-                    colData[i*4+3] = 1;
+                    const r = hue2rgb(p_, q, h + 1/3);
+                    const g = hue2rgb(p_, q, h);
+                    const b = hue2rgb(p_, q, h - 1/3);
+                    const a = 1.0;
 
-                    sizeData[i] = p.visualSize * dpr;
+                    addNodeQuad(
+                        p.x, p.y,
+                        NODE_RADIUS_PX,
+                        r, g, b, a,
+                        nodePositions,
+                        nodeColors
+                    );
                 });
 
-                gl.useProgram(particleProgram);
-                gl.uniformMatrix3fv(gl.getUniformLocation(particleProgram, 'uProjection'), false, getProjection());
-                gl.bindBuffer(gl.ARRAY_BUFFER, particlePositionBuffer);
-                gl.bufferData(gl.ARRAY_BUFFER, posData, gl.DYNAMIC_DRAW);
-                gl.enableVertexAttribArray(0);
-                gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-                gl.bindBuffer(gl.ARRAY_BUFFER, particleColorBuffer);
-                gl.bufferData(gl.ARRAY_BUFFER, colData, gl.DYNAMIC_DRAW);
-                gl.enableVertexAttribArray(1);
-                gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
-                gl.bindBuffer(gl.ARRAY_BUFFER, particleSizeBuffer);
-                gl.bufferData(gl.ARRAY_BUFFER, sizeData, gl.DYNAMIC_DRAW);
-                gl.enableVertexAttribArray(2);
-                gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 0, 0);
-                gl.drawArrays(gl.POINTS, 0, particles.length);
+                if (nodePositions.length > 0) {
+                    gl.useProgram(particleProgram);
+                    gl.uniformMatrix3fv(gl.getUniformLocation(particleProgram, 'uProjection'), false, getProjection());
 
-                // Static + mouse lines
+                    gl.bindBuffer(gl.ARRAY_BUFFER, particlePositionBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(nodePositions), gl.DYNAMIC_DRAW);
+                    gl.enableVertexAttribArray(0);
+                    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, particleColorBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(nodeColors), gl.DYNAMIC_DRAW);
+                    gl.enableVertexAttribArray(1);
+                    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+
+                    gl.drawArrays(gl.TRIANGLES, 0, nodePositions.length / 2);
+                }
+
+                // Static + mouse lines (unchanged)
                 const maxDist = isMobile ? CONNECTION_DISTANCE_MOBILE : CONNECTION_DISTANCE_DESKTOP;
                 const linePositions = [];
                 const lineAlphas = [];
-                const lineThickness = (isMobile ? LINE_THICKNESS_MOBILE_PX : LINE_THICKNESS_DESKTOP_PX) * dpr;
 
                 for (let i = 0; i < particles.length; i++) {
                     for (let j = i + 1; j < particles.length; j++) {
@@ -537,7 +566,7 @@
                             addThickLineVerts(
                                 particles[i].x, particles[i].y,
                                 particles[j].x, particles[j].y,
-                                lineThickness,
+                                LINE_THICKNESS_PX * dpr,
                                 alpha,
                                 linePositions,
                                 lineAlphas
@@ -554,7 +583,7 @@
                             addThickLineVerts(
                                 mouseX, mouseY,
                                 particles[i].x, particles[i].y,
-                                lineThickness,
+                                LINE_THICKNESS_PX * dpr,
                                 alpha,
                                 linePositions,
                                 lineAlphas
@@ -581,7 +610,7 @@
                     gl.drawArrays(gl.TRIANGLES, 0, linePositions.length / 2);
                 }
 
-                // Flood propagation
+                // Flood propagation (unchanged except heads are still points for simplicity)
                 let completed = [];
                 signals = signals.filter(sig => {
                     const elapsed = time - sig.start_time;
@@ -603,8 +632,6 @@
                 const headsColor = [];
                 const headsSize = [];
 
-                const floodLineThickness = (isMobile ? LINE_THICKNESS_MOBILE_PX : LINE_THICKNESS_DESKTOP_PX) * dpr;
-
                 signals.forEach(sig => {
                     let progress = (time - sig.start_time) / sig.duration;
                     progress = Math.min(1, Math.max(0, progress));
@@ -621,7 +648,7 @@
 
                     addThickLineVerts(
                         fx, fy, px, py,
-                        floodLineThickness,
+                        LINE_THICKNESS_PX * dpr,
                         baseAlpha,
                         floodPositions,
                         floodAlphas
@@ -656,7 +683,7 @@
                     gl.drawArrays(gl.TRIANGLES, 0, floodPositions.length / 2);
                 }
 
-                // Flood heads
+                // Flood heads (still POINTS – small & simple)
                 if (headsPos.length > 0) {
                     gl.useProgram(particleProgram);
                     gl.uniformMatrix3fv(gl.getUniformLocation(particleProgram, 'uProjection'), false, getProjection());
@@ -671,8 +698,12 @@
                     gl.enableVertexAttribArray(1);
                     gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
 
-                    gl.bindBuffer(gl.ARRAY_BUFFER, particleSizeBuffer);
-                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(headsSize), gl.DYNAMIC_DRAW);
+                    // Fake small point size using uniform or just use tiny quads if needed later
+                    // For now, we use old point logic here (small size so inconsistency less noticeable)
+                    const headSizeData = new Float32Array(headsSize);
+                    const headSizeBuffer = gl.createBuffer();
+                    gl.bindBuffer(gl.ARRAY_BUFFER, headSizeBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, headSizeData, gl.DYNAMIC_DRAW);
                     gl.enableVertexAttribArray(2);
                     gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 0, 0);
 
