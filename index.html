@@ -16,12 +16,26 @@
 <canvas id="c"></canvas>
 
 <script>
+// ─── Synthwave KC3EFJ + random nodes + cyan flood ───
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
 const isMobile = /Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
                  window.innerWidth < 768;
-let w, h;
+
+// Fixed logical design area (computation happens here)
+const DESIGN_WIDTH  = 1400;
+const DESIGN_HEIGHT = 700;
+
+// Scaling & offset to center on screen
+let scaleFactor = 1;
+let offsetX = 0;
+let offsetY = 0;
+
+// Logical dimensions for particles & layout
+let w = DESIGN_WIDTH;
+let h = DESIGN_HEIGHT;
+
 let particles = [];
 let letterGroups = [];
 let mouse = { x: null, y: null, active: false };
@@ -29,7 +43,7 @@ let floodActive = false;
 let floodStartTime = 0;
 let floodGraph = null;
 let postFloodStartTime = 0;
-let floodedLetterEdges = new Map(); // "i-j" → timestamp when both reached
+let floodedLetterEdges = new Map();
 
 const MOUSE_RADIUS       = 180;
 const BASE_LINE_DIST     = 180;
@@ -38,21 +52,20 @@ const LETTER_INTERNAL_DIST = 80;
 
 const PIXELS_PER_RANDOM_NODE = 11000;
 const MIN_RANDOM_NODES = 40;
-const MAX_RANDOM_NODES = 220;
+const MAX_RANDOM_NODES = 120; // hard cap for better performance
 
 const FLOOD_PULSE_DELAY    = 200;
 const FLOOD_DURATION       = 5000;
 const EDGE_GLOW_DURATION   = 10000;
 
-// Node glow timing
-const LETTER_GLOW_ACTIVATION_DELAY = 400;   // ms after node's flood time before strong cyan appears
+const LETTER_GLOW_ACTIVATION_DELAY = 400;
 const LETTER_GLOW_FADE_DURATION    = 4500;
 const LETTER_GLOW_MAX_BLUR         = 18;
 const LETTER_GLOW_MAX_SIZE_MULT    = 2.4;
 const LETTER_GLOW_COLOR            = 'rgba(0, 255, 240, 0.95)';
 
 let lastTime = 0;
-const fpsLimit = isMobile ? 20 : 40; // or 20 for very low-end
+const fpsLimit = isMobile ? 20 : 40;
 const frameInterval = 1000 / fpsLimit;
 
 class RandomParticle {
@@ -281,23 +294,43 @@ function initParticles() {
 }
 
 function resize() {
-  w = canvas.width = window.innerWidth;
-  h = canvas.height = window.innerHeight;
-  floodActive = false;
-  postFloodStartTime = 0;
-  floodedLetterEdges.clear();
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  const ratioW = canvas.width  / DESIGN_WIDTH;
+  const ratioH = canvas.height / DESIGN_HEIGHT;
+  scaleFactor = Math.min(ratioW, ratioH);
+
+  offsetX = (canvas.width  - DESIGN_WIDTH  * scaleFactor) / 2;
+  offsetY = (canvas.height - DESIGN_HEIGHT * scaleFactor) / 2;
+
+  w = DESIGN_WIDTH;
+  h = DESIGN_HEIGHT;
+
   initParticles();
 }
 
 window.addEventListener('resize', resize);
-window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.active = true; });
+window.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const px = e.clientX - rect.left;
+  const py = e.clientY - rect.top;
+  mouse.x = (px - offsetX) / scaleFactor;
+  mouse.y = (py - offsetY) / scaleFactor;
+  mouse.active = true;
+});
 window.addEventListener('mouseout', () => mouse.active = false);
 
 canvas.addEventListener('click', e => {
-  const clickX = e.clientX, clickY = e.clientY;
+  const rect = canvas.getBoundingClientRect();
+  const px = e.clientX - rect.left;
+  const py = e.clientY - rect.top;
+  const lx = (px - offsetX) / scaleFactor;
+  const ly = (py - offsetY) / scaleFactor;
+
   let minD = Infinity, clicked = null;
   particles.forEach(p => {
-    const d = Math.hypot(p.x - clickX, p.y - clickY);
+    const d = Math.hypot(p.x - lx, p.y - ly);
     if (d < minD) { minD = d; clicked = p; }
   });
   if (minD > 20) return;
@@ -443,7 +476,6 @@ function drawFloodWaves() {
   const currentTime = Date.now() - floodStartTime;
   const n = particles.length;
 
-  // Activate edge glow as soon as both letter nodes reached
   letterGroups.forEach(group => {
     group.edges.forEach(([gi, gj]) => {
       const p1 = group.particles[gi], p2 = group.particles[gj];
@@ -455,7 +487,6 @@ function drawFloodWaves() {
     });
   });
 
-  // Wave propagation visuals
   for (let i = 0; i < n; i++) {
     for (let neigh of floodGraph[i]) {
       if (neigh < i) continue;
@@ -494,15 +525,20 @@ function loop(timestamp) {
   const elapsed = timestamp - lastTime;
 
   if (elapsed > frameInterval) {
-    ctx.clearRect(0, 0, w, h);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.translate(offsetX, offsetY);
+    ctx.scale(scaleFactor, scaleFactor);
+
     particles.forEach(p => { p.update(); p.draw(); });
     drawDynamicConnections();
     drawPermanentOutlines();
     drawMouseConnections();
-  
+
     if (floodActive) {
-      const elapsed = Date.now() - floodStartTime;
-      if (elapsed > FLOOD_DURATION) {
+      const floodElapsed = Date.now() - floodStartTime;
+      if (floodElapsed > FLOOD_DURATION) {
         floodActive = false;
         floodGraph = null;
         postFloodStartTime = Date.now();
@@ -510,13 +546,17 @@ function loop(timestamp) {
         drawFloodWaves();
       }
     }
+
+    ctx.restore();
+
     lastTime = timestamp - (elapsed % frameInterval);
   }
+
   requestAnimationFrame(loop);
 }
 
 resize();
-loop();
+requestAnimationFrame(loop);
 </script>
 </body>
 </html>
