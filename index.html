@@ -1,562 +1,189 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="mobile-web-app-capable" content="yes">
-  <title>Synth Nodes • KC3EFJ + Random</title>
-  <style>
-    * { margin:0; padding:0; box-sizing:border-box; }
-    body { height:100vh; background:linear-gradient(135deg, #0a0015 0%, #18002b 100%); overflow:hidden; }
-    canvas { display:block; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KC3EFJ</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: linear-gradient(to bottom, #000, #0a0a23);
+            font-family: 'Courier New', monospace;
+            color: #fff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            position: relative;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        .content {
+            z-index: 2;
+            text-align: center;
+            cursor: pointer;
+            width: 100%;
+            max-width: 90vw;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 60vh;
+        }
+
+        .callsign {
+            font-size: 4rem;
+            letter-spacing: 0.5rem;
+            text-shadow: 0 0 10px #ff00ff, 0 0 20px #00ffff, 0 0 30px #ff00ff;
+            transition: transform 0.3s ease;
+        }
+
+        .callsign:hover {
+            transform: scale(1.05);
+        }
+
+        .blurb {
+            display: none;
+            margin-top: 20px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            max-width: 80%;
+            font-size: 1.2rem;
+            text-shadow: 0 0 5px #00ffff;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @media (max-width: 600px) {
+            .callsign {
+                font-size: 2.5rem;
+                letter-spacing: 0.3rem;
+            }
+            .blurb {
+                font-size: 1rem;
+                padding: 15px;
+            }
+        }
+    </style>
 </head>
 <body>
-<canvas id="c"></canvas>
+    <canvas id="canvas"></canvas>
+    <div class="content" onclick="toggleBlurb()">
+        <div class="callsign">KC3EFJ</div>
+        <div class="blurb" id="blurb">
+            Amateur Radio Operator based in Cocoa, Florida. <br>
+            Callsign: KC3EFJ <br>
+            Interests: HF DXing, Digital Modes, Emergency Communications. <br>
+            Contact: @jeffmhopkins on X.
+        </div>
+    </div>
 
-<script>
-// ─── Synthwave KC3EFJ + random nodes + cyan flood ───
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
-
-const isMobile = /Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-                 window.innerWidth < 768;
-
-// Fixed logical design area (computation happens here)
-const DESIGN_WIDTH  = 1400;
-const DESIGN_HEIGHT = 700;
-
-// Scaling & offset to center on screen
-let scaleFactor = 1;
-let offsetX = 0;
-let offsetY = 0;
-
-// Logical dimensions for particles & layout
-let w = DESIGN_WIDTH;
-let h = DESIGN_HEIGHT;
-
-let particles = [];
-let letterGroups = [];
-let mouse = { x: null, y: null, active: false };
-let floodActive = false;
-let floodStartTime = 0;
-let floodGraph = null;
-let postFloodStartTime = 0;
-let floodedLetterEdges = new Map();
-
-const MOUSE_RADIUS       = 180;
-const BASE_LINE_DIST     = 180;
-const HALF_LINE_DIST     = BASE_LINE_DIST / 2;
-const LETTER_INTERNAL_DIST = 80;
-
-const PIXELS_PER_RANDOM_NODE = 11000;
-const MIN_RANDOM_NODES = 40;
-const MAX_RANDOM_NODES = 120; // hard cap for better performance
-
-const FLOOD_PULSE_DELAY    = 200;
-const FLOOD_DURATION       = 5000;
-const EDGE_GLOW_DURATION   = 10000;
-
-const LETTER_GLOW_ACTIVATION_DELAY = 400;
-const LETTER_GLOW_FADE_DURATION    = 4500;
-const LETTER_GLOW_MAX_BLUR         = 18;
-const LETTER_GLOW_MAX_SIZE_MULT    = 2.4;
-const LETTER_GLOW_COLOR            = 'rgba(0, 255, 240, 0.95)';
-
-let lastTime = 0;
-const fpsLimit = isMobile ? 20 : 40;
-const frameInterval = 1000 / fpsLimit;
-
-class RandomParticle {
-  constructor() {
-    this.reset();
-    this.isLetterNode = false;
-    this.floodDist = -1;
-    this.id = -1;
-  }
-  reset() {
-    this.x = Math.random() * w;
-    this.y = Math.random() * h;
-    this.vx = (Math.random() - 0.5) * 0.5;
-    this.vy = (Math.random() - 0.5) * 0.5;
-    this.baseSize = Math.random() * 2.2 + 1;
-  }
-  update() {
-    this.x += this.vx;
-    this.y += this.vy;
-    if (this.x < -60 || this.x > w + 60 || this.y < -60 || this.y > h + 60) this.reset();
-  }
-  distTo(x, y) { return Math.hypot(this.x - x, this.y - y); }
-  draw() {
-    let size = this.baseSize;
-    let alpha = 0.92;
-    let shadowBlur = 6;
-    let shadowColor = 'rgba(160, 100, 240, 0.7)';
-
-    if (mouse.active) {
-      const d = this.distTo(mouse.x, mouse.y);
-      const inf = Math.max(0, 1 - d / MOUSE_RADIUS);
-      size *= (1 + inf * 1.2);
-      alpha += inf * 0.08;
-    }
-
-    if (floodActive && this.floodDist !== -1) {
-      const t = Date.now() - floodStartTime - this.floodDist * FLOOD_PULSE_DELAY;
-      if (t >= 0) {
-        const decay = Math.exp(-t / 800);
-        const pulse = Math.sin(t / 150 * Math.PI) * decay;
-        size += pulse * 4;
-        alpha += pulse * 0.2;
-        shadowBlur += pulse * 10;
-        shadowColor = 'rgba(0, 255, 255, 0.9)';
-      }
-    }
-
-    size = Math.max(0.2, size);
-    alpha = Math.max(0.05, Math.min(1.0, alpha));
-
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, size, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(210, 150, 255, ${alpha})`;
-    ctx.shadowColor = shadowColor;
-    ctx.shadowBlur = shadowBlur;
-    ctx.fill();
-  }
-}
-
-class LetterParticle {
-  constructor(homeX, homeY) {
-    this.homeX = homeX;
-    this.homeY = homeY;
-    this.x = homeX;
-    this.y = homeY;
-    this.vx = 0;
-    this.vy = 0;
-    this.baseSize = Math.random() * 1.8 + 0.9;
-    this.isLetterNode = true;
-    this.floodDist = -1;
-    this.id = -1;
-  }
-  update() {
-    const dx = this.homeX - this.x;
-    const dy = this.homeY - this.y;
-    this.vx += dx * 0.03;
-    this.vy += dy * 0.03;
-    this.vx += (Math.random() - 0.5) * 0.15;
-    this.vy += (Math.random() - 0.5) * 0.15;
-    this.vx *= 0.92;
-    this.vy *= 0.92;
-    this.x += this.vx;
-    this.y += this.vy;
-  }
-  distTo(x, y) { return Math.hypot(this.x - x, this.y - y); }
-  draw() {
-    let size = this.baseSize;
-    let alpha = 0.92;
-    let shadowBlur = 6;
-    let shadowColor = 'rgba(160, 100, 240, 0.7)';
-
-    if (mouse.active) {
-      const d = this.distTo(mouse.x, mouse.y);
-      const inf = Math.max(0, 1 - d / MOUSE_RADIUS);
-      size *= (1 + inf * 1.2);
-      alpha += inf * 0.08;
-    }
-
-    let extraGlowAlpha = 0;
-    let extraGlowBlur  = 0;
-    let extraGlowSize  = 0;
-    const now = Date.now();
-
-    if (this.floodDist !== -1) {
-      const nodeReachTime = floodStartTime + this.floodDist * FLOOD_PULSE_DELAY;
-      const timeSinceReach = now - nodeReachTime;
-
-      if (timeSinceReach >= LETTER_GLOW_ACTIVATION_DELAY) {
-        const adjustedT = timeSinceReach - LETTER_GLOW_ACTIVATION_DELAY;
-
-        if (floodActive) {
-          const decay = Math.exp(-adjustedT / 900);
-          const pulse = Math.sin(adjustedT / 140 * Math.PI) * decay;
-          extraGlowSize  = pulse * 1.1;
-          extraGlowAlpha = 0.4 + pulse * 0.55;
-          extraGlowBlur  = 8 + pulse * 10;
-        } else if (postFloodStartTime > 0) {
-          const elapsed = now - postFloodStartTime;
-          if (elapsed < LETTER_GLOW_FADE_DURATION) {
-            const fade = 1 - (elapsed / LETTER_GLOW_FADE_DURATION);
-            extraGlowAlpha = 0.55 * fade * fade;
-            extraGlowBlur  = LETTER_GLOW_MAX_BLUR * fade;
-            extraGlowSize  = (LETTER_GLOW_MAX_SIZE_MULT - 1) * fade;
-          }
+    <script>
+        function toggleBlurb() {
+            const blurb = document.getElementById('blurb');
+            blurb.style.display = blurb.style.display === 'block' ? 'none' : 'block';
         }
 
-        if (extraGlowAlpha > 0) {
-          size *= (1 + extraGlowSize);
-          alpha = Math.max(alpha, 0.4 + extraGlowAlpha * 0.8);
-          shadowBlur = Math.max(shadowBlur, extraGlowBlur);
-          shadowColor = LETTER_GLOW_COLOR;
+        // Synthwave node animation
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let width = canvas.width = window.innerWidth;
+        let height = canvas.height = window.innerHeight;
+
+        window.addEventListener('resize', () => {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            initParticles();
+        });
+
+        class Particle {
+            constructor() {
+                this.x = Math.random() * width;
+                this.y = Math.random() * height;
+                this.vx = (Math.random() - 0.5) * 0.5;
+                this.vy = (Math.random() - 0.5) * 0.5;
+                this.radius = Math.random() * 2 + 1;
+                this.color = ['#ff00ff', '#00ffff', '#ff00aa', '#00ffaa'][Math.floor(Math.random() * 4)];
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+
+                if (this.x < 0 || this.x > width) this.vx *= -1;
+                if (this.y < 0 || this.y > height) this.vy *= -1;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.fill();
+            }
         }
-      }
-    }
 
-    size = Math.max(0.2, size);
-    alpha = Math.max(0.05, Math.min(1.0, alpha));
+        let particles = [];
+        const numParticles = 50; // Limited for mobile performance
 
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, size, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(210, 150, 255, ${alpha})`;
-    ctx.shadowColor = shadowColor;
-    ctx.shadowBlur = shadowBlur;
-    ctx.fill();
+        function initParticles() {
+            particles = [];
+            for (let i = 0; i < numParticles; i++) {
+                particles.push(new Particle());
+            }
+        }
 
-    if (extraGlowAlpha > 0.3) {
-      ctx.beginPath();
-      ctx.arc(this.x, this.y, size * 0.6, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(0, 255, 240, ${extraGlowAlpha * 0.7})`;
-      ctx.shadowColor = 'rgba(0, 255, 255, 0.9)';
-      ctx.shadowBlur = extraGlowBlur * 1.4;
-      ctx.fill();
-    }
-  }
-}
+        initParticles();
 
-function initParticles() {
-  particles = [];
-  letterGroups = [];
-  floodedLetterEdges.clear();
+        function animate() {
+            requestAnimationFrame(animate);
+            ctx.clearRect(0, 0, width, height);
 
-  const area = w * h;
-  let randomCount = Math.floor(area / PIXELS_PER_RANDOM_NODE);
-  randomCount = Math.max(MIN_RANDOM_NODES, Math.min(MAX_RANDOM_NODES, randomCount));
+            particles.forEach(p => {
+                p.update();
+                p.draw();
+            });
 
-  for (let i = 0; i < randomCount; i++) particles.push(new RandomParticle());
+            // Connect nearby particles
+            for (let i = 0; i < particles.length; i++) {
+                for (let j = i + 1; j < particles.length; j++) {
+                    const dx = particles[i].x - particles[j].x;
+                    const dy = particles[i].y - particles[j].y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
 
-  const letterCount = 6;
-  const colsPerLetter = 3;
-  const spacesBetween = letterCount - 1;
-  const totalLetterCols = letterCount * colsPerLetter;
-  const totalSpacesCols = spacesBetween * 1;
-  const totalContentCols = totalLetterCols + totalSpacesCols;
+                    if (dist < 150) { // Adjust distance for connections
+                        ctx.beginPath();
+                        ctx.moveTo(particles[i].x, particles[i].y);
+                        ctx.lineTo(particles[j].x, particles[j].y);
+                        ctx.strokeStyle = `rgba(255, 0, 255, ${1 - dist / 150})`;
+                        ctx.lineWidth = 0.5;
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
 
-  const minSideCols = 3 * colsPerLetter;
-  const totalColsNeeded = totalContentCols + 2 * minSideCols;
-
-  let cell = Math.floor(w / totalColsNeeded);
-  cell = Math.max(25, Math.min(55, cell));
-
-  const totalWidth = totalContentCols * cell;
-  const sidePadding = (w - totalWidth) / 2;
-
-  const space = cell;
-  const letterHeight = 5;
-  const centerY = h / 2;
-
-  const letters = {
-    K: [[0,0],[2,0],[0,1],[2,1],[0,2],[1,2],[0,3],[2,3],[0,4],[2,4]],
-    C: [[1,0],[2,0],[0,1],[0,2],[0,3],[1,4],[2,4]],
-    '3': [[0,0],[1,0],[2,1],[1,2],[2,2],[2,3],[0,4],[1,4]],
-    E: [[0,0],[1,0],[2,0],[0,1],[0,2],[1,2],[0,3],[0,4],[1,4],[2,4]],
-    F: [[0,0],[1,0],[2,0],[0,1],[0,2],[1,2],[0,3],[0,4]],
-    J: [[1,0],[2,0],[2,1],[2,2],[0,3],[2,3],[0,4],[1,4]]
-  };
-
-  const letterOrder = ['K', 'C', '3', 'E', 'F', 'J'];
-
-  let currentX = sidePadding;
-
-  letterOrder.forEach(letterKey => {
-    const points = letters[letterKey];
-    const groupParticles = [];
-
-    points.forEach(([col, row]) => {
-      const homeX = currentX + col * cell;
-      const homeY = centerY - (letterHeight / 2 * cell) + row * cell;
-      const p = new LetterParticle(homeX, homeY);
-      particles.push(p);
-      groupParticles.push(p);
-    });
-
-    const edges = [];
-    const maxOutlineDist = cell * Math.sqrt(2) + 2;
-    for (let i = 0; i < groupParticles.length; i++) {
-      for (let j = i + 1; j < groupParticles.length; j++) {
-        const dx = groupParticles[i].homeX - groupParticles[j].homeX;
-        const dy = groupParticles[i].homeY - groupParticles[j].homeY;
-        if (Math.hypot(dx, dy) <= maxOutlineDist) edges.push([i, j]);
-      }
-    }
-
-    letterGroups.push({ particles: groupParticles, edges });
-    currentX += colsPerLetter * cell + space;
-  });
-}
-
-function resize() {
-  canvas.width  = window.innerWidth;
-  canvas.height = window.innerHeight;
-
-  const ratioW = canvas.width  / DESIGN_WIDTH;
-  const ratioH = canvas.height / DESIGN_HEIGHT;
-  scaleFactor = Math.min(ratioW, ratioH);
-
-  offsetX = (canvas.width  - DESIGN_WIDTH  * scaleFactor) / 2;
-  offsetY = (canvas.height - DESIGN_HEIGHT * scaleFactor) / 2;
-
-  w = DESIGN_WIDTH;
-  h = DESIGN_HEIGHT;
-
-  initParticles();
-}
-
-window.addEventListener('resize', resize);
-window.addEventListener('mousemove', e => {
-  const rect = canvas.getBoundingClientRect();
-  const px = e.clientX - rect.left;
-  const py = e.clientY - rect.top;
-  mouse.x = (px - offsetX) / scaleFactor;
-  mouse.y = (py - offsetY) / scaleFactor;
-  mouse.active = true;
-});
-window.addEventListener('mouseout', () => mouse.active = false);
-
-canvas.addEventListener('click', e => {
-  const rect = canvas.getBoundingClientRect();
-  const px = e.clientX - rect.left;
-  const py = e.clientY - rect.top;
-  const lx = (px - offsetX) / scaleFactor;
-  const ly = (py - offsetY) / scaleFactor;
-
-  let minD = Infinity, clicked = null;
-  particles.forEach(p => {
-    const d = Math.hypot(p.x - lx, p.y - ly);
-    if (d < minD) { minD = d; clicked = p; }
-  });
-  if (minD > 20) return;
-  startFlood(clicked);
-});
-
-function startFlood(startP) {
-  const n = particles.length;
-  const graph = Array.from({length: n}, () => []);
-  particles.forEach((p, i) => { p.id = i; p.floodDist = -1; });
-
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      const p1 = particles[i], p2 = particles[j];
-      const d = p1.distTo(p2.x, p2.y);
-      let maxD = p1.isLetterNode && p2.isLetterNode ? LETTER_INTERNAL_DIST :
-                 p1.isLetterNode !== p2.isLetterNode ? HALF_LINE_DIST : BASE_LINE_DIST;
-      if (d < maxD) {
-        graph[i].push(j); graph[j].push(i);
-      }
-    }
-  }
-
-  const dist = new Array(n).fill(-1);
-  const startId = startP.id;
-  dist[startId] = 0;
-  const queue = [startId];
-  let ptr = 0;
-  while (ptr < queue.length) {
-    const cur = queue[ptr++];
-    for (const neigh of graph[cur]) {
-      if (dist[neigh] === -1) {
-        dist[neigh] = dist[cur] + 1;
-        queue.push(neigh);
-      }
-    }
-  }
-
-  particles.forEach((p, i) => p.floodDist = dist[i]);
-  floodGraph = graph;
-  floodStartTime = Date.now();
-  floodActive = true;
-  postFloodStartTime = 0;
-  floodedLetterEdges.clear();
-}
-
-function drawDynamicConnections() {
-  for (let i = 0; i < particles.length; i++) {
-    for (let j = i + 1; j < particles.length; j++) {
-      const p1 = particles[i], p2 = particles[j];
-      const d = p1.distTo(p2.x, p2.y);
-      let maxD = p1.isLetterNode && p2.isLetterNode ? LETTER_INTERNAL_DIST :
-                 p1.isLetterNode !== p2.isLetterNode ? HALF_LINE_DIST : BASE_LINE_DIST;
-      if (d >= maxD) continue;
-
-      const alpha = (1 - d / maxD) ** 1.9 * 0.5;
-      const lw = (p1.isLetterNode && p2.isLetterNode) ? 1.8 : 0.9;
-
-      const grad = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y);
-      grad.addColorStop(0, `rgba(120, 230, 255, ${alpha})`);
-      grad.addColorStop(1, `rgba(210, 130, 255, ${alpha})`);
-
-      ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      ctx.lineTo(p2.x, p2.y);
-      ctx.strokeStyle = grad;
-      ctx.lineWidth = lw;
-      ctx.shadowColor = 'rgba(140, 120, 220, 0.25)';
-      ctx.shadowBlur = 4;
-      ctx.stroke();
-    }
-  }
-}
-
-function drawPermanentOutlines() {
-  const now = Date.now();
-  letterGroups.forEach(group => {
-    group.edges.forEach(([gi, gj]) => {
-      const p1 = group.particles[gi], p2 = group.particles[gj];
-      const i = p1.id, j = p2.id;
-      const key = i < j ? `${i}-${j}` : `${j}-${i}`;
-
-      const actTime = floodedLetterEdges.get(key);
-      let isGlowing = false, glowT = 0;
-      if (actTime !== undefined) {
-        glowT = now - actTime;
-        if (glowT < EDGE_GLOW_DURATION) isGlowing = true;
-      }
-
-      let alpha = 0.65, lineWidth = 1.3, shadowBlur = 5;
-      let shadowColor = 'rgba(140, 120, 220, 0.45)';
-      let colorA = 'rgba(120, 230, 255,', colorB = 'rgba(210, 130, 255,';
-
-      if (isGlowing) {
-        const decay = Math.exp(-glowT / 3500);
-        const pulse = Math.sin(glowT / 900 * Math.PI) * decay * 0.7;
-        alpha = 0.65 + pulse * 0.35;
-        lineWidth = 1.3 + pulse * 1.2;
-        shadowBlur = 5 + pulse * 12;
-        shadowColor = 'rgba(0, 220, 220, 0.7)';
-        colorA = 'rgba(0, 240, 255,', colorB = 'rgba(0, 180, 220,';
-      }
-
-      const grad = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y);
-      grad.addColorStop(0, `${colorA} ${alpha})`);
-      grad.addColorStop(1, `${colorB} ${alpha})`);
-
-      ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      ctx.lineTo(p2.x, p2.y);
-      ctx.strokeStyle = grad;
-      ctx.lineWidth = lineWidth;
-      ctx.shadowColor = shadowColor;
-      ctx.shadowBlur = shadowBlur;
-      ctx.stroke();
-    });
-  });
-}
-
-function drawMouseConnections() {
-  if (!mouse.active) return;
-  for (const p of particles) {
-    const d = p.distTo(mouse.x, mouse.y);
-    if (d >= MOUSE_RADIUS) continue;
-    const alpha = (1 - d / MOUSE_RADIUS) ** 1.6 * 0.75;
-    const grad = ctx.createLinearGradient(p.x, p.y, mouse.x, mouse.y);
-    grad.addColorStop(0, `rgba(140, 245, 255, ${alpha})`);
-    grad.addColorStop(1, `rgba(230, 150, 255, ${alpha * 0.92})`);
-
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(mouse.x, mouse.y);
-    ctx.strokeStyle = grad;
-    ctx.lineWidth = 1.1 + (1 - d / MOUSE_RADIUS) * 1.2;
-    ctx.shadowColor = 'rgba(180, 160, 255, 0.4)';
-    ctx.shadowBlur = 6;
-    ctx.stroke();
-  }
-}
-
-function drawFloodWaves() {
-  if (!floodGraph) return;
-  const currentTime = Date.now() - floodStartTime;
-  const n = particles.length;
-
-  letterGroups.forEach(group => {
-    group.edges.forEach(([gi, gj]) => {
-      const p1 = group.particles[gi], p2 = group.particles[gj];
-      const i = p1.id, j = p2.id;
-      const key = i < j ? `${i}-${j}` : `${j}-${i}`;
-      if (p1.floodDist !== -1 && p2.floodDist !== -1 && !floodedLetterEdges.has(key)) {
-        floodedLetterEdges.set(key, Date.now());
-      }
-    });
-  });
-
-  for (let i = 0; i < n; i++) {
-    for (let neigh of floodGraph[i]) {
-      if (neigh < i) continue;
-      const p1 = particles[i], p2 = particles[neigh];
-      if (p1.floodDist === -1 || p2.floodDist === -1) continue;
-      if (Math.abs(p1.floodDist - p2.floodDist) !== 1) continue;
-
-      let lower = p1.floodDist < p2.floodDist ? p1 : p2;
-      let higher = p1.floodDist > p2.floodDist ? p1 : p2;
-
-      const startT = lower.floodDist * FLOOD_PULSE_DELAY;
-      const t = currentTime - startT;
-      if (t < 0 || t > FLOOD_PULSE_DELAY) continue;
-
-      const frac = t / FLOOD_PULSE_DELAY;
-      const ix = lower.x + frac * (higher.x - lower.x);
-      const iy = lower.y + frac * (higher.y - lower.y);
-
-      const grad = ctx.createLinearGradient(lower.x, lower.y, ix, iy);
-      grad.addColorStop(0, `rgba(120, 230, 255, 0.2)`);
-      grad.addColorStop(1, `rgba(0, 255, 255, 0.95)`);
-
-      ctx.beginPath(); ctx.moveTo(lower.x, lower.y); ctx.lineTo(ix, iy);
-      ctx.strokeStyle = grad; ctx.lineWidth = 2.5;
-      ctx.shadowColor = 'rgba(0, 220, 220, 0.8)'; ctx.shadowBlur = 10; ctx.stroke();
-
-      ctx.beginPath(); ctx.arc(ix, iy, 3, 0, Math.PI*2);
-      ctx.fillStyle = `rgba(0, 255, 255, 1)`;
-      ctx.shadowColor = 'rgba(0, 255, 255, 1)'; ctx.shadowBlur = 12; ctx.fill();
-    }
-  }
-}
-
-function loop(timestamp) {
-  if (!lastTime) lastTime = timestamp;
-  const elapsed = timestamp - lastTime;
-
-  if (elapsed > frameInterval) {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    ctx.save();
-    ctx.translate(offsetX, offsetY);
-    ctx.scale(scaleFactor, scaleFactor);
-
-    particles.forEach(p => { p.update(); p.draw(); });
-    drawDynamicConnections();
-    drawPermanentOutlines();
-    drawMouseConnections();
-
-    if (floodActive) {
-      const floodElapsed = Date.now() - floodStartTime;
-      if (floodElapsed > FLOOD_DURATION) {
-        floodActive = false;
-        floodGraph = null;
-        postFloodStartTime = Date.now();
-      } else {
-        drawFloodWaves();
-      }
-    }
-
-    ctx.restore();
-
-    lastTime = timestamp - (elapsed % frameInterval);
-  }
-
-  requestAnimationFrame(loop);
-}
-
-resize();
-requestAnimationFrame(loop);
-</script>
+        animate();
+    </script>
 </body>
 </html>
