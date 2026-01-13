@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -155,6 +156,57 @@
 
     <script>
         (function() {
+            // ────────────────────────────────────────────────
+            //  EASILY ADJUSTABLE SETTINGS – all the fun stuff is here!
+            // ────────────────────────────────────────────────
+
+            // Particle / Node settings
+            const BASE_NODE_COUNT_DESKTOP = 120;     // target nodes on 1920×1080 screen
+            const BASE_NODE_COUNT_MOBILE  = 120;      // target nodes on smaller screens
+            const MIN_NODES               = 30;
+            const MAX_NODES               = 400;
+
+            const NODE_SPEED_DESKTOP      = 0.6;     // pixels per frame
+            const NODE_SPEED_MOBILE       = 0.6;
+
+            const NODE_SIZE_MIN           = 2;       // base size in pixels
+            const NODE_SIZE_VARIANCE      = 6;       // random +0 to this value
+
+            // Connection line settings
+            const LINE_THICKNESS_PX       = 1.3;     // base thickness in CSS pixels (good range: 1.6–3.5)
+            const CONNECTION_DISTANCE_DESKTOP = 230; // max distance for static lines
+            const CONNECTION_DISTANCE_MOBILE  = 230;
+
+            const STATIC_LINE_ALPHA_BASE  = 0.75;    // how strong the dim purple lines are
+            const MOUSE_LINE_ALPHA_BASE   = 0.55;    // mouse hover lines
+
+            // Color hue ranges for nodes (in degrees 0–360)
+            const HUE_RANGE_1_START       = 180;     // cyan-ish
+            const HUE_RANGE_1_WIDTH       = 30;
+            const HUE_RANGE_2_START       = 240;     // blue-purple
+            const HUE_RANGE_2_WIDTH       = 60;
+            const HUE_RANGE_3_START       = 270;     // purple-magenta
+            const HUE_RANGE_3_WIDTH       = 30;
+
+            const SATURATION_BASE         = 0.5;     // 0–1
+            const SATURATION_VARIANCE     = 1.0;     // how much it can vary around base
+
+            // Flood / signal pulse settings
+            const SIGNAL_SPEED            = 220;     // pixels per second
+            const FLOOD_HEAD_SIZE         = 6;       // pixel size of the leading dot
+            const FLOOD_LINE_PULSE_SPEED  = 0.008;   // lower = slower pulse
+            const FLOOD_HEAD_PULSE_SPEED  = 0.012;
+
+            // Background fade / trail effect
+            const CLEAR_ALPHA             = 0.09;    // higher = less trail / faster fade
+
+            // Click-to-flood trigger sensitivity (squared distance)
+            const CLICK_SNAP_DISTANCE_SQ  = 60 * 60; // 60px radius
+
+            // ────────────────────────────────────────────────
+            //  END OF TUNABLE SETTINGS
+            // ────────────────────────────────────────────────
+
             const callsign = document.getElementById('callsign');
             const callsignContainer = document.getElementById('callsignContainer');
             const blurb = document.getElementById('blurb');
@@ -183,7 +235,6 @@
             let mouseX = -1000, mouseY = -1000;
             let signals = [];
             let activated = new Set();
-            const signalSpeed = 220;
 
             document.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
             document.addEventListener('touchmove', e => {
@@ -200,17 +251,8 @@
             }, { passive: true });
 
             const baseWidth = 1920, baseHeight = 1080;
-            const baseCountDesktop = 120, baseCountMobile = 70;
-            const baseDensityDesktop = baseCountDesktop / (baseWidth * baseHeight);
-            const baseDensityMobile = baseCountMobile / (baseWidth * baseHeight);
-
-            // ────────────────────────────────────────────────
-            // Line width handling for high-DPI screens
-            // ────────────────────────────────────────────────
-            function updateLineWidth() {
-                const lineWidth = Math.max(1.0, dpr * 1.15);  // 1.15–1.3 usually gives good balance
-                gl.lineWidth(lineWidth);
-            }
+            const baseDensityDesktop = BASE_NODE_COUNT_DESKTOP / (baseWidth * baseHeight);
+            const baseDensityMobile  = BASE_NODE_COUNT_MOBILE  / (baseWidth * baseHeight);
 
             function resize() {
                 dpr = window.devicePixelRatio || 1;
@@ -222,24 +264,15 @@
 
                 isMobile = window.innerWidth <= 768 || 'ontouchstart' in window;
                 const density = isMobile ? baseDensityMobile : baseDensityDesktop;
-                const count = Math.max(30, Math.min(400, Math.round(density * (window.innerWidth * window.innerHeight))));
+                const count = Math.max(MIN_NODES, Math.min(MAX_NODES, Math.round(density * (window.innerWidth * window.innerHeight))));
 
                 initParticles(count);
-
-                // Important: re-apply line width after DPR or size change
-                updateLineWidth();
             }
 
             window.addEventListener('resize', resize);
             resize();
 
-            // Initial line width (called after first resize)
-            updateLineWidth();
-
-            // ────────────────────────────────────────────────
-            // Shaders
-            // ────────────────────────────────────────────────
-
+            // Shaders (unchanged)
             const vsSource = `
                 attribute vec2 aPosition;
                 attribute vec4 aColor;
@@ -335,31 +368,57 @@
             }
 
             function initParticles(count) {
+                const nodeSpeed = isMobile ? NODE_SPEED_MOBILE : NODE_SPEED_DESKTOP;
                 particles = Array.from({length: count}, () => {
                     const t = Math.random();
                     let hue;
                     if (t < 0.4) {
-                        hue = 180 + (t / 0.4) * 30;
+                        hue = HUE_RANGE_1_START + (t / 0.4) * HUE_RANGE_1_WIDTH;
                     } else if (t < 0.6) {
-                        hue = 240 + (t - 0.4) / 0.2 * 60;
+                        hue = HUE_RANGE_2_START + (t - 0.4) / 0.2 * HUE_RANGE_2_WIDTH;
                     } else {
-                        hue = 270 + ((t - 0.6) / 0.4) * 30;
+                        hue = HUE_RANGE_3_START + ((t - 0.6) / 0.4) * HUE_RANGE_3_WIDTH;
                     }
-                    const saturation = 0.5 + Math.abs(t - 0.5) * 1.0;
+                    const saturation = SATURATION_BASE + Math.abs(t - 0.5) * SATURATION_VARIANCE;
                     return {
                         x: Math.random() * window.innerWidth,
                         y: Math.random() * window.innerHeight,
-                        vx: (Math.random() - 0.5) * (isMobile ? 0.4 : 0.6),
-                        vy: (Math.random() - 0.5) * (isMobile ? 0.4 : 0.6),
+                        vx: (Math.random() - 0.5) * nodeSpeed,
+                        vy: (Math.random() - 0.5) * nodeSpeed,
                         hue: hue,
                         sat: saturation,
-                        visualSize: Math.random() * 5 + 3
+                        visualSize: NODE_SIZE_MIN + Math.random() * NODE_SIZE_VARIANCE
                     };
                 });
             }
 
             gl.enable(gl.BLEND);
             gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+
+            function addThickLineVerts(x1, y1, x2, y2, thickness, alpha, outPositions, outAlphas) {
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const len = Math.hypot(dx, dy);
+                if (len < 0.001) return;
+
+                const ux = dx / len;
+                const uy = dy / len;
+                const px = -uy;
+                const py = ux;
+
+                const hx = px * (thickness / 2);
+                const hy = py * (thickness / 2);
+
+                const ax = x1 - hx, ay = y1 - hy;
+                const bx = x1 + hx, by = y1 + hy;
+                const cx = x2 + hx, cy = y2 + hy;
+                const dx_ = x2 - hx, dy_ = y2 - hy;
+
+                outPositions.push(ax, ay, bx, by, cx, cy);
+                outPositions.push(ax, ay, cx, cy, dx_, dy_);
+
+                for (let i = 0; i < 6; i++) outAlphas.push(alpha);
+            }
 
             let lastTime = 0;
             const targetFPS = isMobile ? 1000/45 : 1000/60;
@@ -379,7 +438,7 @@
                         closest = i;
                     }
                 });
-                if (minDist < 60*60) {
+                if (minDist < CLICK_SNAP_DISTANCE_SQ) {
                     startFlood(closest);
                 }
             });
@@ -391,14 +450,14 @@
             }
 
             function addSignalsFrom(index, startTime) {
-                const maxDist = isMobile ? 145 : 210;
+                const maxDist = isMobile ? CONNECTION_DISTANCE_MOBILE : CONNECTION_DISTANCE_DESKTOP;
                 for (let j = 0; j < particles.length; j++) {
                     if (j === index || activated.has(j)) continue;
                     const dx = particles[index].x - particles[j].x;
                     const dy = particles[index].y - particles[j].y;
                     const dist = Math.hypot(dx, dy);
                     if (dist < maxDist) {
-                        const duration = (dist / signalSpeed) * 1000;
+                        const duration = (dist / SIGNAL_SPEED) * 1000;
                         signals.push({
                             from: index,
                             to: j,
@@ -417,7 +476,7 @@
                 if (delta < targetFPS) return;
                 lastTime = time - (delta % targetFPS);
 
-                gl.clearColor(0, 0, 20/255, 0.09);
+                gl.clearColor(0, 0, 20/255, CLEAR_ALPHA);
                 gl.clear(gl.COLOR_BUFFER_BIT);
 
                 particles.forEach(p => {
@@ -427,7 +486,7 @@
                     if (p.y < 0 || p.y > window.innerHeight) p.vy *= -1;
                 });
 
-                // Draw normal particles
+                // Particles
                 const posData = new Float32Array(particles.length * 2);
                 const colData = new Float32Array(particles.length * 4);
                 const sizeData = new Float32Array(particles.length);
@@ -463,18 +522,24 @@
                 gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 0, 0);
                 gl.drawArrays(gl.POINTS, 0, particles.length);
 
-                // Normal connection lines (dim purple-ish)
-                const maxDist = isMobile ? 145 : 210;
-                const lines = [];
-                const alphas = [];
+                // Static + mouse lines
+                const maxDist = isMobile ? CONNECTION_DISTANCE_MOBILE : CONNECTION_DISTANCE_DESKTOP;
+                const linePositions = [];
+                const lineAlphas = [];
 
                 for (let i = 0; i < particles.length; i++) {
                     for (let j = i + 1; j < particles.length; j++) {
                         const d = Math.hypot(particles[i].x - particles[j].x, particles[i].y - particles[j].y);
                         if (d < maxDist) {
-                            const alpha = (1 - d / maxDist) ** 1.3 * 0.75;
-                            lines.push(particles[i].x, particles[i].y, particles[j].x, particles[j].y);
-                            alphas.push(alpha, alpha);
+                            const alpha = (1 - d / maxDist) ** 1.3 * STATIC_LINE_ALPHA_BASE;
+                            addThickLineVerts(
+                                particles[i].x, particles[i].y,
+                                particles[j].x, particles[j].y,
+                                LINE_THICKNESS_PX * dpr,
+                                alpha,
+                                linePositions,
+                                lineAlphas
+                            );
                         }
                     }
                 }
@@ -483,29 +548,35 @@
                     for (let i = 0; i < particles.length; i++) {
                         const d = Math.hypot(mouseX - particles[i].x, mouseY - particles[i].y);
                         if (d < maxDist) {
-                            const alpha = (1 - d / maxDist) ** 1.3 * 0.55;
-                            lines.push(mouseX, mouseY, particles[i].x, particles[i].y);
-                            alphas.push(alpha, alpha);
+                            const alpha = (1 - d / maxDist) ** 1.3 * MOUSE_LINE_ALPHA_BASE;
+                            addThickLineVerts(
+                                mouseX, mouseY,
+                                particles[i].x, particles[i].y,
+                                LINE_THICKNESS_PX * dpr,
+                                alpha,
+                                linePositions,
+                                lineAlphas
+                            );
                         }
                     }
                 }
 
-                if (lines.length > 0) {
+                if (linePositions.length > 0) {
                     gl.useProgram(lineProgram);
                     gl.uniformMatrix3fv(gl.getUniformLocation(lineProgram, 'uProjection'), false, getProjection());
                     gl.uniform4f(gl.getUniformLocation(lineProgram, 'uColor'), 0.7, 0.1, 0.9, 1.0);
 
                     gl.bindBuffer(gl.ARRAY_BUFFER, linePositionBuffer);
-                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lines), gl.DYNAMIC_DRAW);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(linePositions), gl.DYNAMIC_DRAW);
                     gl.enableVertexAttribArray(0);
                     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
                     gl.bindBuffer(gl.ARRAY_BUFFER, lineAlphaBuffer);
-                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(alphas), gl.DYNAMIC_DRAW);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lineAlphas), gl.DYNAMIC_DRAW);
                     gl.enableVertexAttribArray(1);
                     gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 0, 0);
 
-                    gl.drawArrays(gl.LINES, 0, lines.length / 2);
+                    gl.drawArrays(gl.TRIANGLES, 0, linePositions.length / 2);
                 }
 
                 // Flood propagation
@@ -524,7 +595,7 @@
 
                 completed.forEach(c => addSignalsFrom(c.to, c.arrival));
 
-                const floodLines = [];
+                const floodPositions = [];
                 const floodAlphas = [];
                 const headsPos = [];
                 const headsColor = [];
@@ -542,20 +613,26 @@
                     const px = fx + (tx - fx) * progress;
                     const py = fy + (ty - fy) * progress;
 
-                    floodLines.push(fx, fy, px, py);
-                    const baseAlpha = 0.9 + 0.1 * Math.sin(time * 0.008 + sig.dist * 0.02);
-                    floodAlphas.push(baseAlpha, baseAlpha);
+                    const baseAlpha = 0.9 + 0.1 * Math.sin(time * FLOOD_LINE_PULSE_SPEED + sig.dist * 0.02);
+
+                    addThickLineVerts(
+                        fx, fy, px, py,
+                        LINE_THICKNESS_PX * dpr,
+                        baseAlpha,
+                        floodPositions,
+                        floodAlphas
+                    );
 
                     headsPos.push(px, py);
-                    const headBrightness = 0.9 + 0.1 * Math.sin(time * 0.012 + sig.dist * 0.015);
+                    const headBrightness = 0.9 + 0.1 * Math.sin(time * FLOOD_HEAD_PULSE_SPEED + sig.dist * 0.015);
                     headsColor.push(0, 1, 1, headBrightness);
-                    headsSize.push(6 * dpr);
+                    headsSize.push(FLOOD_HEAD_SIZE * dpr);
                 });
 
-                if (floodLines.length > 0) {
+                if (floodPositions.length > 0) {
                     gl.useProgram(lineProgram);
                     gl.uniformMatrix3fv(gl.getUniformLocation(lineProgram, 'uProjection'), false, getProjection());
-                    const pulse = 0.3 * Math.sin(time * 0.008);
+                    const pulse = 0.3 * Math.sin(time * FLOOD_LINE_PULSE_SPEED);
                     gl.uniform4f(gl.getUniformLocation(lineProgram, 'uColor'), 
                         0.1 + pulse,
                         0.9 + pulse*1.2,
@@ -563,18 +640,19 @@
                         1.0);
 
                     gl.bindBuffer(gl.ARRAY_BUFFER, linePositionBuffer);
-                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(floodLines), gl.DYNAMIC_DRAW);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(floodPositions), gl.DYNAMIC_DRAW);
                     gl.enableVertexAttribArray(0);
                     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
                     gl.bindBuffer(gl.ARRAY_BUFFER, lineAlphaBuffer);
-                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(floodAlphas.map(a => a * 1.4)), gl.DYNAMIC_DRAW);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(floodAlphas), gl.DYNAMIC_DRAW);
                     gl.enableVertexAttribArray(1);
                     gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 0, 0);
 
-                    gl.drawArrays(gl.LINES, 0, floodLines.length / 2);
+                    gl.drawArrays(gl.TRIANGLES, 0, floodPositions.length / 2);
                 }
 
+                // Flood heads
                 if (headsPos.length > 0) {
                     gl.useProgram(particleProgram);
                     gl.uniformMatrix3fv(gl.getUniformLocation(particleProgram, 'uProjection'), false, getProjection());
