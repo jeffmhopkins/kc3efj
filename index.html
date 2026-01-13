@@ -183,7 +183,7 @@
             let mouseX = -1000, mouseY = -1000;
             let signals = [];
             let activated = new Set();
-            const signalSpeed = 220; // slightly faster for better feel
+            const signalSpeed = 220;
 
             document.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
             document.addEventListener('touchmove', e => {
@@ -229,13 +229,14 @@
             const vsSource = `
                 attribute vec2 aPosition;
                 attribute vec4 aColor;
+                attribute float aSize;
                 varying vec4 vColor;
                 uniform mat3 uProjection;
                 void main() {
                     vec3 pos3 = uProjection * vec3(aPosition, 1.0);
                     gl_Position = vec4(pos3.xy, 0.0, 1.0);
                     vColor = aColor;
-                    gl_PointSize = 6.0;
+                    gl_PointSize = aSize;
                 }
             `;
 
@@ -307,6 +308,7 @@
 
             const particlePositionBuffer = gl.createBuffer();
             const particleColorBuffer    = gl.createBuffer();
+            const particleSizeBuffer     = gl.createBuffer();
             const linePositionBuffer     = gl.createBuffer();
             const lineAlphaBuffer        = gl.createBuffer();
 
@@ -319,13 +321,30 @@
             }
 
             function initParticles(count) {
-                particles = Array.from({length: count}, () => ({
-                    x: Math.random() * window.innerWidth,
-                    y: Math.random() * window.innerHeight,
-                    vx: (Math.random() - 0.5) * (isMobile ? 0.4 : 0.6),
-                    vy: (Math.random() - 0.5) * (isMobile ? 0.4 : 0.6),
-                    hue: Math.random() * 60 + 180
-                }));
+                particles = Array.from({length: count}, () => {
+                    // 0 = pure cyan path → 1 = pure magenta path
+                    const t = Math.random();
+                    // Hue: 180° (cyan) → 300° (magenta), but we bias toward ends + white-tinted middle
+                    let hue;
+                    if (t < 0.4) {
+                        hue = 180 + (t / 0.4) * 30;          // 180° → ~210° (cyan → cyan-teal)
+                    } else if (t < 0.6) {
+                        hue = 240 + (t - 0.4) / 0.2 * 60;    // 240° → 300° jump (avoid deep blue)
+                    } else {
+                        hue = 270 + ((t - 0.6) / 0.4) * 30;  // 270° → 300° (magenta zone)
+                    }
+                    // Higher saturation near ends, lower in middle → "whiter" versions
+                    const saturation = 0.5 + Math.abs(t - 0.5) * 1.0;
+                    return {
+                        x: Math.random() * window.innerWidth,
+                        y: Math.random() * window.innerHeight,
+                        vx: (Math.random() - 0.5) * (isMobile ? 0.4 : 0.6),
+                        vy: (Math.random() - 0.5) * (isMobile ? 0.4 : 0.6),
+                        hue: hue,
+                        sat: saturation,
+                        visualSize: Math.random() * 5 + 3
+                    };
+                });
             }
 
             gl.enable(gl.BLEND);
@@ -349,7 +368,7 @@
                         closest = i;
                     }
                 });
-                if (minDist < 60*60) { // generous hit area
+                if (minDist < 60*60) {
                     startFlood(closest);
                 }
             });
@@ -390,7 +409,6 @@
                 gl.clearColor(0, 0, 20/255, 0.09);
                 gl.clear(gl.COLOR_BUFFER_BIT);
 
-                // Update particles
                 particles.forEach(p => {
                     p.x += p.vx;
                     p.y += p.vy;
@@ -401,18 +419,21 @@
                 // Draw normal particles
                 const posData = new Float32Array(particles.length * 2);
                 const colData = new Float32Array(particles.length * 4);
+                const sizeData = new Float32Array(particles.length);
 
                 particles.forEach((p, i) => {
                     posData[i*2]   = p.x;
                     posData[i*2+1] = p.y;
 
                     const h = p.hue / 360;
-                    const q = 0.7;
-                    const p_ = 1.4 - q;
+                    const q = p.sat;
+                    const p_ = 0.0; // max brightness
                     colData[i*4]   = hue2rgb(p_, q, h + 1/3);
                     colData[i*4+1] = hue2rgb(p_, q, h);
                     colData[i*4+2] = hue2rgb(p_, q, h - 1/3);
                     colData[i*4+3] = 1;
+
+                    sizeData[i] = p.visualSize * dpr;
                 });
 
                 gl.useProgram(particleProgram);
@@ -425,11 +446,13 @@
                 gl.bufferData(gl.ARRAY_BUFFER, colData, gl.DYNAMIC_DRAW);
                 gl.enableVertexAttribArray(1);
                 gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+                gl.bindBuffer(gl.ARRAY_BUFFER, particleSizeBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, sizeData, gl.DYNAMIC_DRAW);
+                gl.enableVertexAttribArray(2);
+                gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 0, 0);
                 gl.drawArrays(gl.POINTS, 0, particles.length);
 
-                // ────────────────────────────────────────────────
                 // Normal connection lines (dim purple-ish)
-                // ────────────────────────────────────────────────
                 const maxDist = isMobile ? 145 : 210;
                 const lines = [];
                 const alphas = [];
@@ -474,9 +497,7 @@
                     gl.drawArrays(gl.LINES, 0, lines.length / 2);
                 }
 
-                // ────────────────────────────────────────────────
-                // Flood propagation (glowing cyan lines + head)
-                // ────────────────────────────────────────────────
+                // Flood propagation
                 let completed = [];
                 signals = signals.filter(sig => {
                     const elapsed = time - sig.start_time;
@@ -492,11 +513,11 @@
 
                 completed.forEach(c => addSignalsFrom(c.to, c.arrival));
 
-                // Draw glowing flood lines
                 const floodLines = [];
                 const floodAlphas = [];
                 const headsPos = [];
                 const headsColor = [];
+                const headsSize = [];
 
                 signals.forEach(sig => {
                     let progress = (time - sig.start_time) / sig.duration;
@@ -510,44 +531,39 @@
                     const px = fx + (tx - fx) * progress;
                     const py = fy + (ty - fy) * progress;
 
-                    // Line from origin to current head
                     floodLines.push(fx, fy, px, py);
                     const baseAlpha = 0.9 + 0.1 * Math.sin(time * 0.008 + sig.dist * 0.02);
                     floodAlphas.push(baseAlpha, baseAlpha);
 
-                    // Head (bright glow at tip)
                     headsPos.push(px, py);
                     const headBrightness = 0.9 + 0.1 * Math.sin(time * 0.012 + sig.dist * 0.015);
                     headsColor.push(0, 1, 1, headBrightness);
+                    headsSize.push(6 * dpr);
                 });
 
-                // Draw flood lines
-              if (floodLines.length > 0) {
-    gl.useProgram(lineProgram);
-    gl.uniformMatrix3fv(gl.getUniformLocation(lineProgram, 'uProjection'), false, getProjection());
-    
-    // Brighter, more vivid cyan
-    const pulse = 0.3 * Math.sin(time * 0.008);  // stronger pulse
-    gl.uniform4f(gl.getUniformLocation(lineProgram, 'uColor'), 
-        0.1 + pulse,     // R
-        0.9 + pulse*1.2, // G
-        1.0 + pulse*0.8, // B
-        1.0);
+                if (floodLines.length > 0) {
+                    gl.useProgram(lineProgram);
+                    gl.uniformMatrix3fv(gl.getUniformLocation(lineProgram, 'uProjection'), false, getProjection());
+                    const pulse = 0.3 * Math.sin(time * 0.008);
+                    gl.uniform4f(gl.getUniformLocation(lineProgram, 'uColor'), 
+                        0.1 + pulse,
+                        0.9 + pulse*1.2,
+                        1.0 + pulse*0.8,
+                        1.0);
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, linePositionBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(floodLines), gl.DYNAMIC_DRAW);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, linePositionBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(floodLines), gl.DYNAMIC_DRAW);
+                    gl.enableVertexAttribArray(0);
+                    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, lineAlphaBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(floodAlphas.map(a => a * 1.4)), gl.DYNAMIC_DRAW); // boost alpha
-    gl.enableVertexAttribArray(1);
-    gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 0, 0);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, lineAlphaBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(floodAlphas.map(a => a * 1.4)), gl.DYNAMIC_DRAW);
+                    gl.enableVertexAttribArray(1);
+                    gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 0, 0);
 
-    gl.drawArrays(gl.LINES, 0, floodLines.length / 2);
-}
+                    gl.drawArrays(gl.LINES, 0, floodLines.length / 2);
+                }
 
-                // Draw glowing heads
                 if (headsPos.length > 0) {
                     gl.useProgram(particleProgram);
                     gl.uniformMatrix3fv(gl.getUniformLocation(particleProgram, 'uProjection'), false, getProjection());
@@ -561,6 +577,11 @@
                     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(headsColor), gl.DYNAMIC_DRAW);
                     gl.enableVertexAttribArray(1);
                     gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, particleSizeBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(headsSize), gl.DYNAMIC_DRAW);
+                    gl.enableVertexAttribArray(2);
+                    gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 0, 0);
 
                     gl.drawArrays(gl.POINTS, 0, headsPos.length / 2);
                 }
