@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -162,7 +161,7 @@
 
             // Particle / Node settings
             const BASE_NODE_COUNT_DESKTOP = 120;     // target nodes on 1920×1080 screen
-            const BASE_NODE_COUNT_MOBILE  = 120;      // target nodes on smaller screens
+            const BASE_NODE_COUNT_MOBILE  = 120;     // target nodes on smaller screens
             const MIN_NODES               = 30;
             const MAX_NODES               = 400;
 
@@ -173,12 +172,13 @@
             const NODE_SIZE_VARIANCE      = 6;       // random +0 to this value
 
             // Connection line settings
-            const LINE_THICKNESS_PX       = 1.3;     // base thickness in CSS pixels (good range: 1.6–3.5)
-            const CONNECTION_DISTANCE_DESKTOP = 230; // max distance for static lines
+            const LINE_THICKNESS_DESKTOP_PX   = 1.1;   // base thickness on desktop (CSS pixels)
+            const LINE_THICKNESS_MOBILE_PX    = 1.1;    // thicker on mobile — tune this (1.8–3.0 recommended)
+            const CONNECTION_DISTANCE_DESKTOP = 230;    // max distance for static lines
             const CONNECTION_DISTANCE_MOBILE  = 230;
 
-            const STATIC_LINE_ALPHA_BASE  = 0.75;    // how strong the dim purple lines are
-            const MOUSE_LINE_ALPHA_BASE   = 0.55;    // mouse hover lines
+            const STATIC_LINE_ALPHA_BASE  = 0.6;    // how strong the dim purple lines are
+            const MOUSE_LINE_ALPHA_BASE   = 0.95;   // mouse hover lines
 
             // Color hue ranges for nodes (in degrees 0–360)
             const HUE_RANGE_1_START       = 180;     // cyan-ish
@@ -192,7 +192,7 @@
             const SATURATION_VARIANCE     = 1.0;     // how much it can vary around base
 
             // Flood / signal pulse settings
-            const SIGNAL_SPEED            = 220;     // pixels per second
+            const SIGNAL_SPEED            = 150;     // pixels per second
             const FLOOD_HEAD_SIZE         = 6;       // pixel size of the leading dot
             const FLOOD_LINE_PULSE_SPEED  = 0.008;   // lower = slower pulse
             const FLOOD_HEAD_PULSE_SPEED  = 0.012;
@@ -526,6 +526,7 @@
                 const maxDist = isMobile ? CONNECTION_DISTANCE_MOBILE : CONNECTION_DISTANCE_DESKTOP;
                 const linePositions = [];
                 const lineAlphas = [];
+                const lineThickness = (isMobile ? LINE_THICKNESS_MOBILE_PX : LINE_THICKNESS_DESKTOP_PX) * dpr;
 
                 for (let i = 0; i < particles.length; i++) {
                     for (let j = i + 1; j < particles.length; j++) {
@@ -535,7 +536,7 @@
                             addThickLineVerts(
                                 particles[i].x, particles[i].y,
                                 particles[j].x, particles[j].y,
-                                LINE_THICKNESS_PX * dpr,
+                                lineThickness,
                                 alpha,
                                 linePositions,
                                 lineAlphas
@@ -552,7 +553,7 @@
                             addThickLineVerts(
                                 mouseX, mouseY,
                                 particles[i].x, particles[i].y,
-                                LINE_THICKNESS_PX * dpr,
+                                lineThickness,
                                 alpha,
                                 linePositions,
                                 lineAlphas
@@ -601,6 +602,8 @@
                 const headsColor = [];
                 const headsSize = [];
 
+                const floodLineThickness = (isMobile ? LINE_THICKNESS_MOBILE_PX : LINE_THICKNESS_DESKTOP_PX) * dpr;
+
                 signals.forEach(sig => {
                     let progress = (time - sig.start_time) / sig.duration;
                     progress = Math.min(1, Math.max(0, progress));
@@ -617,7 +620,7 @@
 
                     addThickLineVerts(
                         fx, fy, px, py,
-                        LINE_THICKNESS_PX * dpr,
+                        floodLineThickness,
                         baseAlpha,
                         floodPositions,
                         floodAlphas
