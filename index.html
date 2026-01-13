@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#000814">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>KC3EFJ</title>
     <style>
         html, body {
@@ -20,10 +23,9 @@
             align-items: center;
             position: relative;
             touch-action: manipulation;
-            cursor: default;                          /* normal arrow everywhere by default */
+            cursor: default;
             -webkit-tap-highlight-color: transparent;
         }
-        /* Pointer cursor only on interactive elements */
         .callsign-container,
         .callsign {
             cursor: pointer;
@@ -34,6 +36,13 @@
             width: 100%;
             height: 100%;
             z-index: 1;
+            pointer-events: auto; /* Ensure canvas receives mouse events */
+        }
+        .content-wrapper,
+        .blurb,
+        .callsign-container {
+            pointer-events: auto; /* Allow interaction with UI elements */
+            z-index: 2;
         }
         .content-wrapper {
             z-index: 2;
@@ -98,7 +107,7 @@
             pointer-events: auto;
             user-select: text;
             -webkit-user-select: text;
-            cursor: text;                                 /* text cursor for selection inside blurb */
+            cursor: text;
         }
         .blurb.visible {
             opacity: 1;
@@ -108,6 +117,11 @@
         .blurb strong {
             color: #00ffff;
             text-shadow: 0 0 10px #00ffff;
+        }
+	.blurb strong a,
+        .blurb a strong {
+            color: inherit;           /* Inherit the color from <strong> */
+            text-decoration: none;    /* Optional: remove underline if you don't want it */
         }
         @media (max-width: 600px) {
             .callsign-container.expanded { transform: translateY(-180px); }
@@ -132,14 +146,15 @@
         <div class="blurb" id="blurb">
             Amateur Radio Operator<br>
             Based in <strong>Port Saint John</strong> (Cocoa), Florida.<br><br>
+            Name: <strong>Jeff Hopkins</strong><br>
             Callsign: <strong>KC3EFJ</strong><br>
             Interests: Digital Modes, APRS, Meshtastic, Eurorack<br><br>
-            Contact: <strong>@jeffmhopkins</strong> on X<br>
-            Email: <strong>jeff.m.hopkins+kc3efj@gmail.com</strong>
+            Email: <strong><a href="mailto:jeff.m.hopkins+kc3efj@gmail.com">jeff.m.hopkins+kc3efj@gmail.com</a></strong><br>
+            Github: <strong><a href="https://github.com/jeffmhopkins/">https://github.com/jeffmhopkins/</a></strong>
         </div>
     </div>
 
-    <script>
+    <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
         (function() {
             const callsign = document.getElementById('callsign');
             const callsignContainer = document.getElementById('callsignContainer');
@@ -160,11 +175,9 @@
                 }
             }
 
-            // Toggle only on direct callsign interaction
             callsign.addEventListener('click', toggleBlurb);
             callsign.addEventListener('touchstart', toggleBlurb, { passive: false });
 
-            // Prevent blurb events from bubbling
             blurb.addEventListener('click', e => e.stopPropagation());
             blurb.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
 
@@ -180,6 +193,31 @@
             }
 
             let width, height, dpr, particles = [], isMobile = false;
+            let mouseX = -1000, mouseY = -1000;
+
+            // Track mouse position over the entire document
+            document.addEventListener('mousemove', e => {
+                mouseX = e.clientX;
+                mouseY = e.clientY;
+            });
+
+            // Track touch position over the entire document
+            document.addEventListener('touchmove', e => {
+                if (e.touches.length > 0) {
+                    const touch = e.touches[0];
+                    mouseX = touch.clientX;
+                    mouseY = touch.clientY;
+                }
+            }, { passive: true });
+
+            // Also capture touchstart in case touchmove doesn't fire immediately
+            document.addEventListener('touchstart', e => {
+                if (e.touches.length > 0) {
+                    const touch = e.touches[0];
+                    mouseX = touch.clientX;
+                    mouseY = touch.clientY;
+                }
+            }, { passive: true });
 
             const baseWidth = 1920;
             const baseHeight = 1080;
@@ -207,7 +245,7 @@
             window.addEventListener('resize', resize);
             resize();
 
-            // Shaders (unchanged)
+            // Shaders
             const vsSource = `
                 attribute vec2 aPosition;
                 attribute vec4 aColor;
@@ -366,16 +404,31 @@
                 const lines = [];
                 const alphas = [];
 
+                // Real particle ↔ real particle connections
                 for (let i = 0; i < particles.length; i++) {
                     for (let j = i + 1; j < particles.length; j++) {
                         const dx = particles[i].x - particles[j].x;
                         const dy = particles[i].y - particles[j].y;
                         const d2 = dx*dx + dy*dy;
-                        const maxD2 = maxDist * maxDist;
-                        if (d2 < maxD2) {
+                        if (d2 < maxDist * maxDist) {
                             const dist = Math.sqrt(d2);
                             const alpha = (1 - dist / maxDist) ** 1.2 * 0.6;
                             lines.push(particles[i].x, particles[i].y, particles[j].x, particles[j].y);
+                            alphas.push(alpha, alpha);
+                        }
+                    }
+                }
+
+                // Mouse/touch virtual node connections (always active)
+                if (mouseX >= 0 && mouseY >= 0 && mouseX <= window.innerWidth && mouseY <= window.innerHeight) {
+                    for (let i = 0; i < particles.length; i++) {
+                        const dx = mouseX - particles[i].x;
+                        const dy = mouseY - particles[i].y;
+                        const d2 = dx*dx + dy*dy;
+                        if (d2 < maxDist * maxDist) {
+                            const dist = Math.sqrt(d2);
+                            const alpha = (1 - dist / maxDist) ** 1.2 * 0.6;
+                            lines.push(mouseX, mouseY, particles[i].x, particles[i].y);
                             alphas.push(alpha, alpha);
                         }
                     }
