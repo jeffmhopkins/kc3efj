@@ -350,7 +350,7 @@
                 canvas.style.height = window.innerHeight + 'px';
                 gl.viewport(0, 0, width, height);
 
-                isMobile = window.innerWidth <= 768 || 'ontouchstart' in window;
+                isMobile = false;//window.innerWidth <= 768 || 'ontouchstart' in window;
                 const density = isMobile ? baseDensityMobile : baseDensityDesktop;
                 const count = Math.max(MIN_NODES, Math.min(MAX_NODES, Math.round(density * (window.innerWidth * window.innerHeight))));
 
