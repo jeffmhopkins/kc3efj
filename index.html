@@ -343,14 +343,14 @@
             }
 
             function resize() {
-                dpr = window.devicePixelRatio || 1;
+                dpr = 1;//window.devicePixelRatio || 1;
                 width = canvas.width = window.innerWidth * dpr;
                 height = canvas.height = window.innerHeight * dpr;
                 canvas.style.width = window.innerWidth + 'px';
                 canvas.style.height = window.innerHeight + 'px';
                 gl.viewport(0, 0, width, height);
 
-                isMobile = false;//window.innerWidth <= 768 || 'ontouchstart' in window;
+                isMobile = window.innerWidth <= 768 || 'ontouchstart' in window;
                 const density = isMobile ? baseDensityMobile : baseDensityDesktop;
                 const count = Math.max(MIN_NODES, Math.min(MAX_NODES, Math.round(density * (window.innerWidth * window.innerHeight))));
 
