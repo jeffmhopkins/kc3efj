@@ -94,6 +94,17 @@
         glyphGap:      [90, 150],    // drifting glyph cluster (s)
         ridgePresent:  0.5,          // fraction of time the distant ridge is faded in
 
+        // ── background depth: drifting nebula clouds + a parallax near-star layer ──
+        nebulaCount:   5,            // soft colored cloud clusters behind the sky
+        nearStars:     34,           // brighter foreground stars that drift/twinkle over the shader field
+
+        // ── sky weather (occasional fade-in moods, like the ridge) ──
+        auroraPresent: 0.4,          // fraction of time the aurora curtains are up
+        lightningGap:  [16, 48],     // gap between distant lightning flickers (s)
+
+        // ── capital-ship flyby (huge wireframe dreadnought crossing the far horizon) ──
+        capitalGap:    [70, 140],    // seconds between dreadnought passes
+
         // ── Star Fox wingmate squadron (flies in from behind, holds formation, peels off) ──
         shipGap:       [90, 90],     // seconds of empty sky between squadron passes
         shipScale:     0.28,         // ship size (world half-extent)
@@ -401,8 +412,8 @@
     const LINE_FLOATS = NODE_MAX * NODE_MAX * 6;   // 2 verts * (2 pos+1 alpha+3 col) upper bound, generous
     const PT_FLOATS   = (NODE_MAX + CONFIG.pulseMax) * 6;
     // separate FX buffers for cameo objects (keeps them off the tight network buffers)
-    const FX_LINE_FLOATS = 4096 * 6;   // ridge + polyhedron edges + light-cycle ribbon
-    const FX_PT_FLOATS   = 1024 * 6;   // comet/star heads + trails + glyph clusters + blast rings/flashes
+    const FX_LINE_FLOATS = 6144 * 6;   // ridge + polyhedra + light-cycle + aurora + capital ship
+    const FX_PT_FLOATS   = 2560 * 6;   // trails + blast rings/shrapnel + nebula + near-stars + embers
     const FX_TRI_FLOATS  = 2048 * 6;   // translucent ship hull fills (3 verts/face)
 
     function buildGL(){
@@ -709,10 +720,25 @@
           ENG: [[0.10,0,-0.95],[-0.10,0,-0.95]] },
     ];
 
+    // huge capital ship (own renderer): long wedge hull + bridge tower + ventral fin + running lights
+    const CAPITAL_MODEL = {
+        V: [[0,0,2.4],[0.6,0.12,0.6],[-0.6,0.12,0.6],[0.6,-0.12,0.6],[-0.6,-0.12,0.6],
+            [0.75,0.14,-1.6],[-0.75,0.14,-1.6],[0.75,-0.14,-1.6],[-0.75,-0.14,-1.6],
+            [0,0.5,-0.8],[0.2,0.16,-0.4],[-0.2,0.16,-0.4],[0,-0.4,-0.9]],
+        E: [[0,1],[0,2],[0,3],[0,4],[1,2],[3,4],[1,3],[2,4],
+            [1,5],[2,6],[3,7],[4,8],[5,6],[7,8],[5,7],[6,8],
+            [10,9],[11,9],[10,11],[9,5],[9,6],[12,7],[12,8]],
+        F: [[1,5,6],[1,6,2],[3,4,8],[3,8,7],[1,3,7],[1,7,5],[2,6,8],[2,8,4],
+            [0,1,2],[0,3,4],[0,1,3],[0,2,4],[9,10,11]],
+        ENG: [[0.4,0,-1.6],[-0.4,0,-1.6],[0,0.05,-1.6]],
+        LIGHTS: [1,2,3,4,5,6,7,8,9] };
+
     const FX = { stars: [], comets: [], polys: [], cycles: [], glyphs: [], ridge: null,
-                 squad: null, transits: [], bolts: [], blasts: [],
-                 ridgeAmt: 0, ridgeTarget: 0,
-                 nextStar: 0, nextComet: 0, nextPoly: 0, nextCycle: 0, nextGlyph: 0, nextShip: 0, nextTransit: 0, nextRidge: 0 };
+                 squad: null, transits: [], bolts: [], blasts: [], embers: [], groundSparks: [],
+                 nebula: [], nearStars: [], aurora: null, lightning: null, capital: null,
+                 ridgeAmt: 0, ridgeTarget: 0, auroraAmt: 0, auroraTarget: 0,
+                 nextStar: 0, nextComet: 0, nextPoly: 0, nextCycle: 0, nextGlyph: 0, nextShip: 0, nextTransit: 0,
+                 nextRidge: 0, nextAurora: 0, nextLightning: 0, nextCapital: 0 };
 
     function buildRidge(){
         // y-down normalized; horizon is at ~0.60, ridge sits just above it (smaller y)
@@ -736,10 +762,44 @@
         FX.squad = null;
         FX.nextShip = 4;                                  // first pass arrives soon; later gaps use shipGap
         FX.transits = []; FX.nextTransit = rand(3, 8);
-        FX.bolts = []; FX.blasts = [];
+        FX.bolts = []; FX.blasts = []; FX.embers = []; FX.groundSparks = [];
         FX.ridgeAmt = 0; FX.ridgeTarget = Math.random() < CONFIG.ridgePresent ? 1 : 0;
         FX.nextRidge = rand(25, 60);
         buildRidge();
+
+        // background depth: soft nebula clouds (clusters of faint point-blobs) + a near-star layer
+        FX.nebula = [];
+        const NCOL = [CONFIG.col.cyan, CONFIG.col.purple, CONFIG.col.magenta];
+        for (let i = 0; i < CONFIG.nebulaCount; i++){
+            const blobs = [], n = 4 + (Math.random() * 4 | 0);
+            for (let j = 0; j < n; j++)
+                blobs.push({ dx: rand(-0.05, 0.05), dy: rand(-0.035, 0.035), sz: rand(42, 78) });
+            FX.nebula.push({ x: Math.random(), y: rand(0.05, 0.34), depth: rand(0.2, 0.9),
+                drift: rand(0.004, 0.012) * (side() ? 1 : -1), col: NCOL[Math.random() * 3 | 0],
+                br: rand(0.03, 0.065), blobs });
+        }
+        FX.nearStars = [];
+        for (let i = 0; i < CONFIG.nearStars; i++)
+            FX.nearStars.push({ x: Math.random(), y: rand(0.03, 0.5), depth: rand(0.3, 1.0),
+                drift: rand(0.003, 0.010) * (side() ? 1 : -1), ph: rand(0, 6.28), rate: rand(0.5, 2.0),
+                mag: rand(0.4, 1.0), col: Math.random() < 0.3 ? CONFIG.col.cyan : CONFIG.col.hot });
+
+        // weather: aurora curtains (fade-in mood) + occasional distant lightning
+        buildAurora();
+        FX.auroraAmt = 0; FX.auroraTarget = Math.random() < CONFIG.auroraPresent ? 1 : 0;
+        FX.nextAurora = rand(20, 50); FX.lightning = null; FX.nextLightning = rand(CONFIG.lightningGap[0], CONFIG.lightningGap[1]);
+
+        // capital-ship flyby
+        FX.capital = null; FX.nextCapital = rand(20, 45);   // first one fairly soon, later gaps use capitalGap
+    }
+
+    function buildAurora(){
+        // vertical shimmering curtains high in the sky; each band is a column with a wavy envelope
+        const N = 46, bands = [];
+        for (let i = 0; i < N; i++)
+            bands.push({ x: i / N, top: rand(0.04, 0.12), bot: rand(0.30, 0.42),
+                ph: rand(0, 6.28), rate: rand(0.4, 1.1), amp: rand(0.6, 1.0), hue: rand(0, 1) });
+        FX.aurora = { bands, scroll: 0 };
     }
 
     function updateFX(dt){
@@ -898,6 +958,14 @@
                     }
                     FX.blasts.push({ x: tg.x, y: tg.h, z: tg.z, model: tg.model, yaw: tg.yaw, pitch: tg.pitch,
                         roll: tg.roll, scaleMul: tg.scaleMul, age: 0, dur: 1.1, debris });
+                    const ne = 10 + (Math.random() * 8 | 0);        // longer-lived embers that fall to the grid
+                    for (let k = 0; k < ne; k++){
+                        const th = Math.random() * 6.2832, cphi = rand(-0.1, 0.8), sphi = Math.sqrt(Math.max(0, 1 - cphi * cphi));
+                        const sp = rand(1.2, 3.4), lifeT = rand(1.4, 2.6);
+                        FX.embers.push({ x: tg.x, y: tg.h, z: tg.z,
+                            vx: sphi * Math.cos(th) * sp, vy: cphi * sp * 0.7 + rand(0.3, 0.9), vz: sphi * Math.sin(th) * sp,
+                            life: lifeT, max: lifeT });
+                    }
                 }
                 FX.bolts.splice(i, 1);
             } else if (b.z < 1 || b.z > 36){ FX.bolts.splice(i, 1); }
@@ -919,6 +987,60 @@
         FX.nextRidge -= dt;
         if (FX.nextRidge <= 0){ FX.ridgeTarget = Math.random() < CONFIG.ridgePresent ? 1 : 0; FX.nextRidge = rand(40, 90); }
         FX.ridgeAmt += (FX.ridgeTarget - FX.ridgeAmt) * (1 - Math.pow(0.5, dt / 3.0));
+
+        // background depth: drift nebula clouds and near-stars (wrap in x)
+        const wrap = v => ((v % 1) + 1) % 1;
+        for (const nb of FX.nebula)    nb.x = wrap(nb.x + nb.drift * dt);
+        for (const st of FX.nearStars) st.x = wrap(st.x + st.drift * dt);
+
+        // aurora curtains fade in/out as a mood; gentle shimmer scroll
+        if (FX.aurora) FX.aurora.scroll += dt;
+        FX.nextAurora -= dt;
+        if (FX.nextAurora <= 0){ FX.auroraTarget = Math.random() < CONFIG.auroraPresent ? 1 : 0; FX.nextAurora = rand(30, 70); }
+        FX.auroraAmt += (FX.auroraTarget - FX.auroraAmt) * (1 - Math.pow(0.5, dt / 4.0));
+
+        // distant lightning: an occasional quick jagged strike + sky flicker
+        FX.nextLightning -= dt;
+        if (FX.nextLightning <= 0){
+            const x = rand(0.2, 0.8), segs = [], n = 6 + (Math.random() * 4 | 0);
+            let yy = rand(0.06, 0.18), xx = x;
+            for (let k = 0; k <= n; k++){ segs.push({ x: xx, y: yy }); yy += (0.56 - yy) / (n - k + 1); xx += rand(-0.03, 0.03); }
+            FX.lightning = { age: 0, dur: rand(0.35, 0.6), x, segs, flashes: 2 + (Math.random() * 2 | 0) };
+            FX.nextLightning = rand(CONFIG.lightningGap[0], CONFIG.lightningGap[1]);
+        }
+        if (FX.lightning){ FX.lightning.age += dt; if (FX.lightning.age >= FX.lightning.dur) FX.lightning = null; }
+
+        // capital-ship flyby (single instance; far, slow)
+        if (!FX.capital){ FX.nextCapital -= dt; if (FX.nextCapital <= 0) FX.capital = makeCapital(); }
+        else {
+            const c = FX.capital;
+            c.x += c.ovx * dt; c.z += c.ovz * dt; c.lights += dt;
+            const inv = 1 / (Math.max(0.5, c.z) * 0.6), uvx = 0.5 + cam.headSend + c.x * inv / (sw / sh);
+            if (uvx < -0.9 || uvx > 1.9){ FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]); }
+        }
+
+        // falling embers from detonations — arc out, fall under gravity, spark on the grid floor
+        const GRAV = 1.5, gs2 = reduced ? 0 : CONFIG.gridScroll;
+        for (let i = FX.embers.length - 1; i >= 0; i--){ const e = FX.embers[i];
+            e.vy -= GRAV * dt;
+            e.x += e.vx * dt; e.z += (e.vz - gs2) * dt; e.y += e.vy * dt; e.life -= dt;
+            if (e.y <= 0){ FX.groundSparks.push({ x: e.x, z: e.z, age: 0, dur: rand(0.35, 0.6) }); FX.embers.splice(i, 1); }
+            else if (e.life <= 0 || e.z < 1 || e.z > 40) FX.embers.splice(i, 1);
+        }
+        if (FX.embers.length > 150) FX.embers.splice(0, FX.embers.length - 150);
+        for (let i = FX.groundSparks.length - 1; i >= 0; i--){ const g = FX.groundSparks[i];
+            g.age += dt; if (g.age >= g.dur) FX.groundSparks.splice(i, 1); }
+    }
+
+    function makeCapital(){
+        const dir = Math.random() < 0.5 ? 1 : -1, z = rand(16, 28);
+        const span = z * 0.6 * (sw / sh) * 1.2;
+        const sp = rand(0.5, 1.1), dev = rand(-0.22, 0.22);
+        const ang = (dir > 0 ? Math.PI / 2 : -Math.PI / 2) - dir * dev;
+        const ovx = Math.sin(ang) * sp, ovz = Math.cos(ang) * sp * 0.3;
+        return { x: dir > 0 ? -span : span, z, h: rand(0.15, 0.55), ovx, ovz,
+            yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
+            roll: -dir * rand(0.05, 0.16), scaleMul: rand(5.0, 8.0), lights: 0 };
     }
 
     // project a world point (lateral xw, forward z, height above grid) to clip space,
@@ -966,7 +1088,7 @@
                 slot: s, lead: !!s.lead, phase: i * 1.3,
                 model: Math.random() * SHIP_MODELS.length | 0,   // random ship variation
                 col: s.lead ? CONFIG.col.hot : CONFIG.col.cyan,
-                scaleMul: s.lead ? 1.25 : 1.0,
+                scaleMul: (s.lead ? 1.25 : 1.0) * rand(0.8, 1.2),   // +/-20% per-ship size variation
                 arriveAt: arriveAt[i], arrDur: ARR_DUR, departAt: departAt[i], depDur: DEP_DUR,
                 edx, edz, edh,
             };
@@ -1012,6 +1134,24 @@
             fxPtData[pi++] = cx(nx); fxPtData[pi++] = cy(ny); fxPtData[pi++] = size;
             fxPtData[pi++] = r; fxPtData[pi++] = g; fxPtData[pi++] = b;
         };
+        const HOT = CONFIG.col.hot, CYAN = CONFIG.col.cyan, MAG = CONFIG.col.magenta, PUR = CONFIG.col.purple;
+        const wrap1 = v => ((v % 1) + 1) % 1;
+
+        // --- background depth: soft parallax nebula clouds + a drifting near-star layer ---
+        for (const nb of FX.nebula){
+            const px = wrap1(nb.x + cam.headSend * (0.02 + nb.depth * 0.05));
+            for (const bl of nb.blobs){
+                const x = px + bl.dx;                            // draw at x and x-1 for a seamless wrap
+                pushPt(x,     nb.y + bl.dy, bl.sz * dprNow, nb.col[0]*nb.br, nb.col[1]*nb.br, nb.col[2]*nb.br);
+                pushPt(x - 1, nb.y + bl.dy, bl.sz * dprNow, nb.col[0]*nb.br, nb.col[1]*nb.br, nb.col[2]*nb.br);
+            }
+        }
+        for (const st of FX.nearStars){
+            const tw = st.mag * (0.45 + 0.55 * Math.sin(timeSec * st.rate + st.ph));
+            if (tw <= 0.02) continue;
+            const px = wrap1(st.x + cam.headSend * (0.04 + st.depth * 0.10));
+            pushPt(px, st.y, (1.4 + 1.8 * st.depth) * dprNow, st.col[0]*tw, st.col[1]*tw, st.col[2]*tw);
+        }
 
         // --- distant ridge (dim, far, parallax-slow; does NOT bloom) ---
         if (FX.ridge && FX.ridgeAmt > 0.01){
@@ -1022,6 +1162,37 @@
                 x0 = ((x0 % 1) + 1) % 1; x1 = ((x1 % 1) + 1) % 1;
                 if (Math.abs(x1 - x0) > 0.5) continue;       // skip wrap seam
                 pushLineN(x0, R.pts[i] - cam.pitchSend, x1, R.pts[i + 1] - cam.pitchSend, b, c);
+            }
+        }
+
+        // --- aurora curtains (sky weather; vertical shimmering bands, cyan low -> purple high) ---
+        if (FX.aurora && FX.auroraAmt > 0.01){
+            const A = FX.aurora, amt = FX.auroraAmt;
+            for (const bd of A.bands){
+                const px = wrap1(bd.x + cam.headSend * 0.06);
+                const wav = 0.5 + 0.5 * Math.sin(A.scroll * bd.rate + bd.ph);
+                const bb = amt * bd.amp * (0.16 + 0.5 * wav);
+                const top = bd.top + 0.03 * Math.sin(A.scroll * 0.7 + bd.ph * 1.3);
+                const SEG = 6;
+                for (let s = 0; s < SEG; s++){
+                    const t0 = s / SEG, t1 = (s + 1) / SEG;
+                    const y0 = bd.bot + (top - bd.bot) * t0, y1 = bd.bot + (top - bd.bot) * t1;
+                    const col = [CYAN[0] + (PUR[0]-CYAN[0])*t0, CYAN[1] + (PUR[1]-CYAN[1])*t0, CYAN[2] + (PUR[2]-CYAN[2])*t0];
+                    pushLineN(px, y0 - cam.pitchSend, px, y1 - cam.pitchSend, bb * (1 - t0), col);
+                }
+            }
+        }
+
+        // --- distant lightning: a quick jagged strike + brief sky flicker ---
+        if (FX.lightning){
+            const L = FX.lightning, p = L.age / L.dur;
+            const strobe = Math.abs(Math.sin(p * Math.PI * L.flashes));
+            const b = (1 - p) * strobe;
+            if (b > 0.03){
+                for (let k = 0; k < L.segs.length - 1; k++)
+                    pushLineN(L.segs[k].x, L.segs[k].y, L.segs[k+1].x, L.segs[k+1].y, 1.3 * b, HOT);
+                for (let k = 0; k < 5; k++)
+                    pushPt(L.x + (k/4 - 0.5) * 0.3, 0.1 + 0.06 * k, 95 * dprNow, 0.10*b, 0.10*b, 0.17*b);
             }
         }
 
@@ -1207,7 +1378,6 @@
         }
 
         // blaster tracers (bright hot-core streaks, true-3D so they foreshorten toward the horizon)
-        const HOT = CONFIG.col.hot, CYAN = CONFIG.col.cyan;
         for (const b of FX.bolts){
             if (b.delay > 0) continue;                          // still in the lock-on beat
             if (b.z < 0.5) continue;
@@ -1221,7 +1391,6 @@
         }
 
         // detonations: hull blown apart + omnidirectional shrapnel + white flash + double shockwave
-        const MAG = CONFIG.col.magenta;
         for (const bl of FX.blasts){
             const p = bl.age / bl.dur, fade = 1 - p, fade2 = fade * fade;
             const M = SHIP_MODELS[bl.model];
@@ -1271,6 +1440,52 @@
                     pushPt((Pr.x + 1) * 0.5, (1 - Pr.y) * 0.5, 7 * rb * dprNow,
                            CYAN[0] * rb, CYAN[1] * rb, CYAN[2] * rb);
                 }
+            }
+        }
+
+        // --- capital-ship flyby (huge translucent dreadnought near the horizon) ---
+        if (FX.capital){
+            const c = FX.capital, M = CAPITAL_MODEL;
+            const Sxy = CONFIG.shipScale * c.scaleMul, Sz = Sxy * 0.6;
+            const cr = Math.cos(c.roll), sr = Math.sin(c.roll), cyw = Math.cos(c.yaw), syw = Math.sin(c.yaw);
+            const rot = v => { let x = v[0]*cr - v[1]*sr, y = v[0]*sr + v[1]*cr, zz = v[2];   // roll(z) then yaw(y)
+                const x2 = x*cyw + zz*syw; zz = -x*syw + zz*cyw; x = x2; return [x, y, zz]; };
+            const proj = v => { const r = rot(v); return projectWorld(c.x + r[0]*Sxy, c.z + r[2]*Sz, c.h + r[1]*Sxy, aspect); };
+            const cc = projectWorld(c.x, c.z, c.h, aspect), ux = (cc.x + 1) * 0.5;
+            const fade = Math.min(1, Math.max(0, Math.min(ux + 0.35, 1.35 - ux) / 0.3));   // ease on/off at the sides
+            if (fade > 0.01){
+                const P = M.V.map(proj);
+                const fillB = CONFIG.shipFill * 0.85 * fade;
+                for (const [a, b2, c2] of M.F) pushTriClip(P[a].x, P[a].y, P[b2].x, P[b2].y, P[c2].x, P[c2].y, fillB, CYAN);
+                for (const [a, b2] of M.E) pushLineClip(P[a].x, P[a].y, P[b2].x, P[b2].y, 0.7 * fade, CYAN);
+                for (let k = 0; k < M.LIGHTS.length; k++){                                  // blinking running lights
+                    const pp = P[M.LIGHTS[k]], bl = 0.5 + 0.5 * Math.sin(c.lights * 3 + k * 1.7), col = (k % 2) ? MAG : CYAN;
+                    pushPt((pp.x + 1) * 0.5, (1 - pp.y) * 0.5, (3 + 3 * bl) * dprNow, col[0]*bl*fade, col[1]*bl*fade, col[2]*bl*fade);
+                }
+                for (const e of M.ENG){ const pe = proj(e);                                // steady engine glow
+                    pushPt((pe.x + 1) * 0.5, (1 - pe.y) * 0.5, Math.min(20, pe.inv * Sxy * 110) * dprNow,
+                           HOT[0]*fade, HOT[1]*0.5*fade, MAG[2]*0.8*fade); }
+            }
+        }
+
+        // --- falling embers + ground sparks from detonations ---
+        for (const e of FX.embers){
+            if (e.z < 0.5) continue;
+            const P = projectWorld(e.x, e.z, e.y, aspect);
+            if (P.inv <= 0) continue;
+            const lf = Math.max(0, e.life / e.max), mx = 1 - lf;
+            pushPt((P.x + 1) * 0.5, (1 - P.y) * 0.5, Math.min(7, P.inv * 22) * lf * dprNow,
+                   (HOT[0] + (MAG[0]-HOT[0])*mx) * 1.2 * lf, (HOT[1] + (MAG[1]-HOT[1])*mx) * 1.2 * lf,
+                   (HOT[2] + (MAG[2]-HOT[2])*mx) * 1.2 * lf);
+        }
+        for (const g of FX.groundSparks){
+            const gp = g.age / g.dur, fade = 1 - gp;
+            const ctr = projectWorld(g.x, g.z, 0, aspect);
+            pushPt((ctr.x + 1) * 0.5, (1 - ctr.y) * 0.5, (4 + 10 * fade) * dprNow, HOT[0]*1.5*fade, HOT[1]*1.2*fade, HOT[2]*0.9*fade);
+            const rr = 0.15 + g.age * 0.8;                                                  // small ring on the grid plane
+            for (let k = 0; k < 8; k++){ const a = k / 8 * 6.2832;
+                const Pr = projectWorld(g.x + Math.cos(a) * rr, g.z + Math.sin(a) * rr, 0, aspect);
+                pushPt((Pr.x + 1) * 0.5, (1 - Pr.y) * 0.5, 3 * fade * dprNow, CYAN[0]*fade, CYAN[1]*fade, CYAN[2]*fade);
             }
         }
 
