@@ -740,7 +740,7 @@
         }
         if (FX.squad){
             FX.squad.t += dt;
-            if (FX.squad.t > 9.5) FX.squad = null;       // total flyby duration
+            if (FX.squad.t > 16.5) FX.squad = null;      // total flyby duration
         }
 
         // advance / retire
@@ -786,14 +786,14 @@
         }));
         return { t: 0, dir, xw0: rand(-0.30, 0.30), ships };
     }
-    // squadron starts already up-front in formation (hold), then pulls ahead and peels
+    // squadron starts already up-front in formation (long, slow hold), then peels off
     function squadAnchor(sq){
-        const t = sq.t, PH = 4.5;
+        const t = sq.t, PH = 11.0;
         let zL, hL, xwL = sq.xw0;
-        if (t < PH){ const p = t / PH;                       // hold formation up front
-            zL = lerp(1.2, 1.6, p); hL = CONFIG.shipHeight; xwL += 0.06 * Math.sin(p * 6.283 * 0.5); }
-        else { const p = Math.min(1, (t - PH) / 4.0);        // recede + climb out
-            zL = lerp(1.6, 4.4, easeIn(p)); hL = CONFIG.shipHeight + 0.15 * p; }
+        if (t < PH){ const p = t / PH;                       // slow drift while holding formation
+            zL = lerp(1.2, 1.45, p); hL = CONFIG.shipHeight; xwL += 0.05 * Math.sin(p * 6.283 * 0.5); }
+        else { const p = Math.min(1, (t - PH) / 5.0);        // recede + climb out
+            zL = lerp(1.45, 4.4, easeIn(p)); hL = CONFIG.shipHeight + 0.15 * p; }
         return { zL, hL, xwL };
     }
 
@@ -942,11 +942,11 @@
             }
         };
         if (FX.squad){
-            const sq = FX.squad, t = sq.t, A = squadAnchor(sq), PEEL = 4.5;
+            const sq = FX.squad, t = sq.t, A = squadAnchor(sq), PEEL = 11.0;
             for (const sh of sq.ships){
                 const s = sh.slot;
-                const peel = easeIn(Math.min(1, Math.max(0, (t - (PEEL + s.pd)) / 1.6)));
-                const fade = Math.min(1, t / 0.5) * (1 - Math.min(1, Math.max(0, (t - (PEEL + s.pd) - 1.2) / 1.0)));
+                const peel = easeIn(Math.min(1, Math.max(0, (t - (PEEL + s.pd)) / 2.2)));
+                const fade = Math.min(1, t / 0.9) * (1 - Math.min(1, Math.max(0, (t - (PEEL + s.pd) - 1.8) / 1.2)));
                 if (fade <= 0.001) continue;
                 const cruise = t < PEEL;
                 const wobR = cruise ? 0.14 * Math.sin(t * 1.6 + sh.phase) : 0;   // alive banking
