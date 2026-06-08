@@ -106,6 +106,7 @@
         // ── formation blasters: holding ships snipe transit craft crossing ahead ──
         blastCone:     0.78,         // forward half-angle (radians, ~45deg) a target must sit within
         blastChance:   1.0,          // probability the formation engages an eligible transit (1 = always fire)
+        blastFireProb: 0.75,         // chance to actually fire on each 1/2s beat (else hold fire that beat)
         blastReact:    0.12,         // lock-on delay before each shot leaves (seconds)
         blastCooldown: 0.5,          // per-ship gap between shots — keeps firing every 1/2s until the kill
         boltSpeed:     26,           // tracer travel speed (world units/sec, +z toward horizon)
@@ -858,8 +859,9 @@
                 // engage-or-ignore decided once, the first time the transit is in any cone
                 if (tr.engaged === undefined && seen) tr.engaged = Math.random() < CONFIG.blastChance;
                 if (!tr.engaged || !best || tr.fireCool > 0) continue;  // not engaged / no shooter / still cooling
+                tr.fireCool = CONFIG.blastCooldown;                     // next opportunity in 1/2s either way
+                if (Math.random() >= CONFIG.blastFireProb) continue;    // held fire on this beat
                 // fire a volley — one per blastCooldown until the target dies or leaves the cone
-                tr.fireCool = CONFIG.blastCooldown;
                 const Sxy = CONFIG.shipScale * best.sh.scaleMul, vz = tr.ovz - gs;
                 const mz = best.sz + Sxy * 1.3, mh = best.shh;         // muzzle just ahead of the nose
                 let T = 0.3;                                           // iterate flight-time vs lead for fast crossers
