@@ -738,7 +738,7 @@
             if (FX.nextShip <= 0) FX.squad = makeSquad();
         } else {
             FX.squad.t += dt;
-            if (FX.squad.t > 82){                         // total flyby: 30 arrive + 30 hold + ~22 peel/exit
+            if (FX.squad.t > FX.squad.endT + 1){          // all ships arrived, held, and departed
                 FX.squad = null;
                 FX.nextShip = rand(CONFIG.shipGap[0], CONFIG.shipGap[1]);
             }
@@ -771,33 +771,37 @@
     }
 
     // squadron: lead anchor trajectory (APPROACH -> CRUISE -> PEEL/EXIT)
+    function shuffle(a){ for (let i = a.length - 1; i > 0; i--){ const j = Math.random() * (i + 1) | 0; const t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+
+    // each wingman arrives and departs independently (one at a time, random stagger);
+    // the formation holds 10s after the LAST ship arrives, then they peel off one by one.
     function makeSquad(){
         const dir = Math.random() < 0.5 ? 1 : -1;
         const slots = [
-            { dxw: 0.0, dz: 0.0,  dh: 0.0,  ps: dir, pd: 0.0, climb: 1 }, // lead (apex, farthest)
-            { dxw:-0.45,dz:-0.30, dh:-0.03, ps: -1,  pd: 1.5, climb: 0 },
-            { dxw: 0.45,dz:-0.30, dh:-0.03, ps:  1,  pd: 3.0, climb: 0 },
-            { dxw:-0.85,dz:-0.60, dh:-0.05, ps: -1,  pd: 4.5, climb: 0 },
-            { dxw: 0.85,dz:-0.60, dh:-0.05, ps:  1,  pd: 6.0, climb: 0 },
+            { dxw: 0.0, dz: 0.0,  dh: 0.0,  ps: dir, lead: 1 }, // lead (apex, farthest)
+            { dxw:-0.45,dz:-0.30, dh:-0.03, ps: -1,  lead: 0 },
+            { dxw: 0.45,dz:-0.30, dh:-0.03, ps:  1,  lead: 0 },
+            { dxw:-0.85,dz:-0.60, dh:-0.05, ps: -1,  lead: 0 },
+            { dxw: 0.85,dz:-0.60, dh:-0.05, ps:  1,  lead: 0 },
         ];
+        const n = slots.length, ARR_DUR = 7.0, DEP_DUR = 15.0, HOLD = 10.0;
+        // staggered arrivals, random order, random gaps (one at a time)
+        const arriveAt = new Array(n); let clk = rand(0.5, 1.5);
+        for (const idx of shuffle([...Array(n).keys()])){ arriveAt[idx] = clk; clk += rand(2.5, 5.5); }
+        let lastArrEnd = 0;
+        for (let i = 0; i < n; i++) lastArrEnd = Math.max(lastArrEnd, arriveAt[i] + ARR_DUR);
+        // depart 10s after everyone has arrived; staggered, different random order
+        const departAt = new Array(n); clk = lastArrEnd + HOLD;
+        for (const idx of shuffle([...Array(n).keys()])){ departAt[idx] = clk; clk += rand(2.5, 5.5); }
+        let endT = 0;
+        for (let i = 0; i < n; i++) endT = Math.max(endT, departAt[i] + DEP_DUR);
         const ships = slots.map((s, i) => ({
-            slot: s, lead: i === 0, phase: i * 1.3,
-            col: i === 0 ? CONFIG.col.hot : CONFIG.col.cyan,
-            scaleMul: i === 0 ? 1.25 : 1.0,
+            slot: s, lead: !!s.lead, phase: i * 1.3,
+            col: s.lead ? CONFIG.col.hot : CONFIG.col.cyan,
+            scaleMul: s.lead ? 1.25 : 1.0,
+            arriveAt: arriveAt[i], arrDur: ARR_DUR, departAt: departAt[i], depDur: DEP_DUR,
         }));
-        return { t: 0, dir, xw0: rand(-0.30, 0.30), ships };
-    }
-    // squadron: 30s arrival (grow in from the distance) -> 30s hold -> peel off
-    function squadAnchor(sq){
-        const t = sq.t, ARR = 30.0, PEEL = 60.0;             // arrival 30s, hold to 60s, then peel
-        let zL, hL = CONFIG.shipHeight, xwL = sq.xw0;
-        if (t < ARR){ const p = t / ARR;                     // slow approach from far -> up front
-            zL = lerp(6.0, 1.3, easeOut(p)); }
-        else if (t < PEEL){ const p = (t - ARR) / (PEEL - ARR);  // hold formation, lazy drift
-            zL = lerp(1.3, 1.5, p); xwL += 0.05 * Math.sin(p * 6.283 * 0.5); }
-        else { const p = Math.min(1, (t - PEEL) / 16.0);     // recede + climb out
-            zL = lerp(1.5, 5.0, easeIn(p)); hL = CONFIG.shipHeight + 0.2 * p; }
-        return { zL, hL, xwL };
+        return { t: 0, dir, xw0: rand(-0.30, 0.30), baseZ: 1.4, ships, endT };
     }
 
     // invert the grid's perspective so floor cameos sit on the moving grid plane
@@ -945,21 +949,31 @@
             }
         };
         if (FX.squad){
-            const sq = FX.squad, t = sq.t, A = squadAnchor(sq), PEEL = 60.0;
+            const sq = FX.squad, t = sq.t;
             for (const sh of sq.ships){
+                if (t < sh.arriveAt) continue;                                   // not on stage yet
                 const s = sh.slot;
-                const peel = easeIn(Math.min(1, Math.max(0, (t - (PEEL + s.pd)) / 15.0)));   // 15s peel/ship
-                const fade = Math.min(1, t / 2.0) * (1 - Math.min(1, Math.max(0, (t - (PEEL + s.pd) - 13.0) / 2.0)));
+                const slotXw = sq.xw0 + s.dxw, slotZ = sq.baseZ + s.dz, slotH = CONFIG.shipHeight + s.dh;
+                let xw, z, h, roll = 0, yaw = 0, pitch = 0, fade;
+                if (t < sh.arriveAt + sh.arrDur){                                // ARRIVING (grow in from afar)
+                    const p = (t - sh.arriveAt) / sh.arrDur;
+                    xw = slotXw; z = lerp(6.0, slotZ, easeOut(p)); h = slotH;
+                    fade = Math.min(1, p / 0.2);
+                } else if (t < sh.departAt){                                     // HOLD formation (alive)
+                    xw = slotXw; z = slotZ; h = slotH; fade = 1;
+                    roll = 0.14 * Math.sin(t * 1.6 + sh.phase);
+                    pitch = 0.05 * Math.sin(t * 1.1 + sh.phase * 1.3);
+                } else {                                                         // DEPARTING (15s peel-off)
+                    const p = Math.min(1, (t - sh.departAt) / sh.depDur), peel = easeIn(p);
+                    xw = slotXw + sq.dir * s.ps * CONFIG.peelSpread * peel;
+                    z  = slotZ + peel * 0.8;
+                    h  = slotH + (sh.lead ? 0.4 : 0.0) * peel + peel * 0.2;
+                    roll  = sq.dir * s.ps * CONFIG.shipMaxRoll * peel;
+                    yaw   = sq.dir * s.ps * 0.7 * peel;
+                    pitch = -0.5 * peel;                                         // nose up on climb-out
+                    fade  = 1 - Math.min(1, Math.max(0, (p - 0.85) / 0.15));
+                }
                 if (fade <= 0.001) continue;
-                const cruise = t < PEEL;
-                const wobR = cruise ? 0.14 * Math.sin(t * 1.6 + sh.phase) : 0;   // alive banking
-                const wobP = cruise ? 0.05 * Math.sin(t * 1.1 + sh.phase * 1.3) : 0;
-                const xw = A.xwL + s.dxw + sq.dir * s.ps * CONFIG.peelSpread * peel;
-                const z  = A.zL + s.dz + peel * 0.8;
-                const h  = A.hL + s.dh + s.climb * peel * 0.4 + peel * 0.2;
-                const roll  = wobR + sq.dir * s.ps * CONFIG.shipMaxRoll * peel;
-                const yaw   = sq.dir * s.ps * 0.7 * peel;
-                const pitch = wobP - 0.5 * peel;                                 // nose up on climb-out
                 drawShip(xw, z, h, roll, yaw, pitch, sh.scaleMul, sh.col, fade, sh.lead);
             }
         }
