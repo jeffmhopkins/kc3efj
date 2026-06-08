@@ -803,13 +803,14 @@
     // the formation holds 10s after the LAST ship arrives, then they peel off one by one.
     function makeSquad(){
         const dir = Math.random() < 0.5 ? 1 : -1;
-        const slots = [
+        const allSlots = [
             { dxw: 0.0, dz: 0.0,  dh: 0.0,  ps: dir, lead: 1 }, // lead (apex, farthest)
             { dxw:-0.45,dz:-0.30, dh:-0.03, ps: -1,  lead: 0 },
             { dxw: 0.45,dz:-0.30, dh:-0.03, ps:  1,  lead: 0 },
             { dxw:-0.85,dz:-0.60, dh:-0.05, ps: -1,  lead: 0 },
             { dxw: 0.85,dz:-0.60, dh:-0.05, ps:  1,  lead: 0 },
         ];
+        const slots = allSlots.slice(0, 2 + (Math.random() * 4 | 0));   // 2..5 ships per pass
         const n = slots.length, ARR_DUR = 7.0, DEP_DUR = 15.0, HOLD = 10.0;
         // staggered arrivals, random order, random gaps (one at a time)
         const arriveAt = new Array(n); let clk = rand(0.5, 1.5);
