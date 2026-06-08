@@ -1,0 +1,1261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a0118">
+<title>OUTRUN GRID — Synthwave / Tron CRT Demo</title>
+<style>
+    html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #05010d;
+    }
+    /* Static CSS fallback shown only if WebGL2 is unavailable */
+    #fallback {
+        position: fixed;
+        inset: 0;
+        display: none;
+        background:
+            radial-gradient(ellipse 60% 38% at 50% 58%, #ff2d95aa, transparent 70%),
+            linear-gradient(to bottom, #0a0118 0%, #1a0533 40%, #3b0a5c 58%, #07030f 58.5%, #05010d 100%);
+    }
+    #fallback::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: repeating-linear-gradient(transparent 0 2px, rgba(0,0,0,.35) 2px 4px);
+        pointer-events: none;
+    }
+    #fallback .msg {
+        position: absolute;
+        bottom: 14px;
+        width: 100%;
+        text-align: center;
+        font: 12px/1.4 'Courier New', monospace;
+        color: #2de2e6;
+        text-shadow: 0 0 6px #2de2e6;
+    }
+    canvas {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+    }
+</style>
+</head>
+<body>
+<div id="fallback"><div class="msg">WebGL2 unavailable — showing static fallback.</div></div>
+<canvas id="gl"></canvas>
+<script>
+(function () {
+    "use strict";
+
+    // ──────────────────────────────────────────────────────────────
+    //  CONFIG — every knob lives here (red-team recommendation)
+    // ──────────────────────────────────────────────────────────────
+    const CONFIG = {
+        dprCap:        1.5,       // clamp devicePixelRatio: retina fill-rate guard
+        fpsCap:        60,        // frame throttle
+        gridScroll:    0.45,      // synthwave floor scroll speed
+        horizon:       0.40,      // 0..1 from bottom (=> ~60% from top)
+
+        nodeCount:     90,        // network nodes (mid laptop comfortable)
+        nodeCountMob:  55,
+        linkDist:      0.17,      // link threshold, fraction of min dimension
+        nodeSpeed:     0.018,     // normalized units / second
+        mouseRepel:    0.12,      // repel radius (normalized)
+
+        bandY:         [0.08, 0.55], // node field band — kept above the horizon (~0.60 y-down)
+        bandX:         [0.06, 0.94],
+
+        pulseEvery:    [1.4, 3.0],   // seconds between new signal pulses
+        pulseSpeed:    1.9,          // 1/seconds along an edge
+        pulseMax:      14,
+        cascadeChance: 0.45,         // chance an arrival re-emits along a neighbour
+
+        bloomStrength: 0.9,
+        scanDepth:     0.12,
+        curvature:     6.0,          // higher = flatter CRT glass
+        chroma:        0.0016,
+        vignette:      0.32,
+
+        // ── grid heading: randomized ONCE on load so we travel at an angle, not straight ──
+        headingRange:  [0.09, 0.22], // random |yaw| picked at startup (screen-x fraction)
+
+        // ── cameo "objects that pass by" (weighted director, mostly one at a time) ──
+        starGap:       [12, 25],     // shooting star spawn gap (s)
+        cometGap:      [180, 360],   // rare big comet (s)
+        polyGap:       [60, 110],    // tumbling wireframe polyhedron (s)
+        cycleGap:      [25, 45],     // light-cycle grid streak (s)
+        glyphGap:      [90, 150],    // drifting glyph cluster (s)
+        ridgePresent:  0.5,          // fraction of time the distant ridge is faded in
+
+        // ── Star Fox wingmate squadron (flies in from behind, holds formation, peels off) ──
+        shipGap:       [90, 90],     // seconds of empty sky between squadron passes
+        shipScale:     0.28,         // ship size (world half-extent)
+        shipHeight:    0.30,         // formation cruise altitude above the grid
+        shipMaxRoll:   1.15,         // peel-off bank angle (radians, ~66deg)
+        peelSpread:    2.6,          // lateral world divergence at full peel-off
+        transitGap:    [7, 18],      // sporadic distant ships transiting side-to-side
+
+        // palette ("Miami Vice Midnight")
+        col: {
+            cyan:    [0.18, 0.89, 0.90],
+            magenta: [1.00, 0.18, 0.58],
+            purple:  [0.73, 0.40, 1.00],
+            orange:  [1.00, 0.70, 0.29],
+            hot:     [1.00, 0.96, 0.90], // signal core (white-hot)
+        }
+    };
+
+    const canvas   = document.getElementById('gl');
+    const fallback = document.getElementById('fallback');
+    const gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
+
+    if (!gl) {
+        canvas.style.display = 'none';
+        fallback.style.display = 'block';
+        return;
+    }
+
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const isMobile = window.innerWidth <= 768 || 'ontouchstart' in window;
+
+    // ──────────────────────────────────────────────────────────────
+    //  Shader sources
+    // ──────────────────────────────────────────────────────────────
+    const VS_QUAD = `#version 300 es
+    layout(location = 0) in vec2 aPos;
+    out vec2 vUv;
+    void main(){ vUv = aPos*0.5+0.5; gl_Position = vec4(aPos,0.0,1.0); }`;
+
+    // Scene: procedural sky + retro sun + perspective grid floor
+    const FS_SCENE = `#version 300 es
+    precision highp float;
+    in vec2 vUv;
+    out vec4 fragColor;
+    uniform vec2  uRes;
+    uniform float uTime;
+    uniform float uHeading;   // signed screen-x fraction: shared yaw (grid VP + sun)
+    uniform float uPitch;     // signed screen-y fraction: shared pitch (bounded)
+    uniform float uSunOnly;   // 1 = render only the sun disc (overlay pass over the network)
+    uniform float uScroll;
+    uniform float uHorizon;
+    uniform vec3  uCyan;
+    uniform vec3  uMagenta;
+
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
+
+    void main(){
+        vec2 uv = vUv;                       // 0..1, y up
+        float aspect = uRes.x / uRes.y;
+        float horizon = uHorizon + uPitch;   // pitched horizon shared by every layer
+        vec3 col;
+
+        if (uv.y < horizon) {
+            // ---- perspective grid floor ----
+            float depth = horizon - uv.y;
+            float z  = 0.20 / (depth + 0.0008);
+            // heading slides the vanishing point (scaled by z so far rows fan toward the new aim)
+            float xw = ((uv.x - 0.5) - uHeading) * aspect * z * 0.6;
+            float yw = z + uTime * uScroll;
+            vec2  g  = vec2(xw, yw);
+            vec2  gf = abs(fract(g) - 0.5);
+            vec2  dd = gf / fwidth(g);                 // resolution-independent AA lines
+            float line = 1.0 - clamp(min(dd.x, dd.y), 0.0, 1.0);
+            float fade = exp(-z * 0.18);
+            vec3  gcol = mix(uCyan, uMagenta, clamp(uv.x, 0.0, 1.0));
+            col  = vec3(0.03, 0.006, 0.07);            // floor base
+            col += gcol * line * fade * 1.35;
+        } else {
+            // ---- sky gradient ----
+            float t = (uv.y - horizon) / (1.0 - horizon);
+            vec3 skyHorizon = vec3(0.42, 0.10, 0.40);
+            vec3 skyMid     = vec3(0.10, 0.02, 0.20);
+            vec3 skyTop     = vec3(0.039, 0.004, 0.094);
+            col = mix(skyHorizon, skyMid, smoothstep(0.0, 0.45, t));
+            col = mix(col, skyTop, smoothstep(0.35, 1.0, t));
+            // ---- stars: round points at random sub-cell positions, irregular twinkle ----
+            vec2 starUv = uv + vec2(uHeading * 0.15, uPitch * 0.15);
+            vec2 gv = starUv * vec2(aspect, 1.0) * 90.0;
+            vec2 id = floor(gv);
+            vec2 fp = fract(gv);
+            float h = hash(id);
+            if (h > 0.93) {                                       // ~7% of cells hold a star
+                vec2 sPos = vec2(hash(id + 11.3), hash(id + 41.7));
+                float core = smoothstep(0.10, 0.0, length(fp - sPos));   // soft round dot
+                float rate = 0.6 + 2.4 * hash(id + 7.1);          // per-star twinkle speed
+                float tw   = 0.45 + 0.55 * sin(uTime * rate + h * 60.0);
+                float mag  = 0.5 + 0.5 * hash(id + 3.3);          // per-star brightness
+                col += vec3(0.8, 0.9, 1.0) * core * tw * mag * smoothstep(0.12, 0.6, t);
+            }
+        }
+
+        // ---- retro sun (overlaid across whole frame so it bleeds over grid) ----
+        float sunX  = 0.5 + uHeading;          // sun sits ON the shared vanishing point
+        float sunR  = 0.17;
+        float sunCY = horizon + sunR * 0.55;   // rides the pitched horizon
+        vec2  p = vec2((uv.x - sunX) * aspect, uv.y - sunCY);
+        float r = length(p);
+        float disc = smoothstep(sunR, sunR - 0.004, r);
+        float gpos = (uv.y - (sunCY - sunR)) / (2.0 * sunR);   // 0 bottom .. 1 top
+        vec3  sunCol = mix(vec3(1.0,0.85,0.42), vec3(1.0,0.20,0.60), clamp(gpos,0.0,1.0));
+        // horizontal slits in lower half, thickening downward
+        float slit = 1.0;
+        float sy = sunCY - uv.y;
+        if (sy > 0.0) {
+            float k = clamp(sy / sunR, 0.0, 1.0);
+            float lines = fract(uv.y * 55.0);
+            slit = 1.0 - step(lines, clamp(k * 0.95, 0.0, 0.85));
+        }
+        if (uSunOnly > 0.5) {                                   // overlay pass: just the disc, on top of the network
+            fragColor = vec4(sunCol, disc * slit);
+            return;
+        }
+
+        // base pass: glow stays behind the network; disc is drawn later (overlay) so dots/lines sit behind it
+        col += vec3(1.0, 0.32, 0.52) * exp(-r * 7.0) * 0.5;     // sun glow
+        col += uCyan * exp(-abs(uv.y - horizon) * 220.0) * 0.6; // bright cyan horizon seam
+
+        fragColor = vec4(col, 1.0);
+    }`;
+
+    // Network lines (additive)
+    const VS_LINE = `#version 300 es
+    layout(location = 0) in vec2 aPos;
+    layout(location = 1) in float aAlpha;
+    layout(location = 2) in vec3 aCol;
+    out float vA; out vec3 vC;
+    void main(){ vA = aAlpha; vC = aCol; gl_Position = vec4(aPos,0.0,1.0); }`;
+    const FS_LINE = `#version 300 es
+    precision highp float;
+    in float vA; in vec3 vC; out vec4 o;
+    void main(){ o = vec4(vC * vA, 1.0); }`;
+
+    // Network points / pulses (additive, soft radial sprite)
+    const VS_PT = `#version 300 es
+    layout(location = 0) in vec2 aPos;
+    layout(location = 1) in float aSize;
+    layout(location = 2) in vec3 aCol;
+    out vec3 vC;
+    void main(){ vC = aCol; gl_PointSize = aSize; gl_Position = vec4(aPos,0.0,1.0); }`;
+    const FS_PT = `#version 300 es
+    precision highp float;
+    in vec3 vC; out vec4 o;
+    void main(){
+        float d = length(gl_PointCoord - 0.5);
+        float a = smoothstep(0.5, 0.0, d);
+        o = vec4(vC * a, 1.0);
+    }`;
+
+    // Bloom bright-pass
+    const FS_BRIGHT = `#version 300 es
+    precision highp float;
+    in vec2 vUv; out vec4 o;
+    uniform sampler2D uTex;
+    void main(){
+        vec3 c = texture(uTex, vUv).rgb;
+        float l = max(max(c.r, c.g), c.b);
+        o = vec4(c * smoothstep(0.55, 0.95, l), 1.0);
+    }`;
+
+    // Separable gaussian blur
+    const FS_BLUR = `#version 300 es
+    precision highp float;
+    in vec2 vUv; out vec4 o;
+    uniform sampler2D uTex;
+    uniform vec2 uDir;
+    void main(){
+        vec3 c = texture(uTex, vUv).rgb * 0.227;
+        c += texture(uTex, vUv + uDir*1.0).rgb * 0.194;
+        c += texture(uTex, vUv - uDir*1.0).rgb * 0.194;
+        c += texture(uTex, vUv + uDir*2.0).rgb * 0.121;
+        c += texture(uTex, vUv - uDir*2.0).rgb * 0.121;
+        c += texture(uTex, vUv + uDir*3.0).rgb * 0.054;
+        c += texture(uTex, vUv - uDir*3.0).rgb * 0.054;
+        o = vec4(c, 1.0);
+    }`;
+
+    // CRT composite
+    const FS_CRT = `#version 300 es
+    precision highp float;
+    in vec2 vUv; out vec4 fragColor;
+    uniform sampler2D uScene;
+    uniform sampler2D uBloom;
+    uniform vec2  uRes;
+    uniform float uTime;
+    uniform float uReduced;
+    uniform float uCurve;
+    uniform float uChroma;
+    uniform float uScanDepth;
+    uniform float uVignette;
+    uniform float uBloomStr;
+
+    vec2 barrel(vec2 uv){
+        vec2 c = uv * 2.0 - 1.0;
+        vec2 off = abs(c.yx) / uCurve;
+        c += c * off * off;
+        return c * 0.5 + 0.5;
+    }
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898,78.233))) * 43758.545); }
+
+    void main(){
+        vec2 uv = barrel(vUv);
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0){
+            fragColor = vec4(0.0, 0.0, 0.0, 1.0); return;
+        }
+        vec2 dir = uv - 0.5;
+        // chromatic aberration grows with distance from centre
+        float r = texture(uScene, uv - dir * uChroma).r;
+        float g = texture(uScene, uv).g;
+        float b = texture(uScene, uv + dir * uChroma).b;
+        vec3 col = vec3(r, g, b);
+
+        col += texture(uBloom, uv).rgb * uBloomStr;     // additive bloom
+
+        // scanlines (fixed count for a chunky tube look), drift when not reduced
+        float scan = 0.5 + 0.5 * sin(uv.y * 620.0 - uTime * 8.0 * (1.0 - uReduced));
+        col *= 1.0 - uScanDepth * scan;
+
+        // aperture-grille RGB triads
+        float m = mod(gl_FragCoord.x, 3.0);
+        vec3 mask = vec3(0.9);
+        if (m < 1.0) mask.r = 1.0; else if (m < 2.0) mask.g = 1.0; else mask.b = 1.0;
+        col *= mask;
+
+        // rolling band + mains flicker (subtle, killed under reduced-motion)
+        float roll = 0.5 + 0.5 * sin((uv.y + uTime * 0.10) * 6.28318);
+        col *= 1.0 + 0.025 * roll * (1.0 - uReduced);
+        col *= 1.0 + 0.012 * sin(uTime * 50.0) * (1.0 - uReduced);
+
+        col += (hash(uv * uRes + uTime) - 0.5) * 0.03;  // grain
+
+        float vig = 1.0 - uVignette * dot(dir, dir) * 2.2;
+        col *= clamp(vig, 0.0, 1.0);
+
+        fragColor = vec4(col, 1.0);
+    }`;
+
+    // ──────────────────────────────────────────────────────────────
+    //  GL helpers
+    // ──────────────────────────────────────────────────────────────
+    function compile(type, src){
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src.trim());
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+            throw new Error(gl.getShaderInfoLog(s) + "\n" + src);
+        return s;
+    }
+    function program(vs, fs){
+        const p = gl.createProgram();
+        gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));
+        gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+        gl.linkProgram(p);
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+            throw new Error(gl.getProgramInfoLog(p));
+        return p;
+    }
+    function uniforms(p){
+        const u = {}; const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+        for (let i = 0; i < n; i++){ const info = gl.getActiveUniform(p, i);
+            u[info.name] = gl.getUniformLocation(p, info.name); }
+        return u;
+    }
+
+    let GL = {};          // programs + uniform maps, (re)built on context restore
+    let fboScene, fboA, fboB;   // framebuffers
+    let quadVAO, lineVAO, ptVAO, fxLineVAO, fxPtVAO;
+    let lineBuf, ptBuf, fxLineBuf, fxPtBuf;
+    let sw, sh, bw, bh;   // scene + bloom dimensions
+
+    function makeFBO(w, h){
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        const fb = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+        return { fb, tex, w, h };
+    }
+
+    const NODE_MAX  = CONFIG.nodeCount;
+    const LINE_FLOATS = NODE_MAX * NODE_MAX * 6;   // 2 verts * (2 pos+1 alpha+3 col) upper bound, generous
+    const PT_FLOATS   = (NODE_MAX + CONFIG.pulseMax) * 6;
+    // separate FX buffers for cameo objects (keeps them off the tight network buffers)
+    const FX_LINE_FLOATS = 4096 * 6;   // ridge + polyhedron edges + light-cycle ribbon
+    const FX_PT_FLOATS   = 512  * 6;   // comet/star heads + trails + glyph clusters
+
+    function buildGL(){
+        GL.scene  = program(VS_QUAD, FS_SCENE);   GL.sceneU  = uniforms(GL.scene);
+        GL.line   = program(VS_LINE, FS_LINE);
+        GL.pt     = program(VS_PT,   FS_PT);
+        GL.bright = program(VS_QUAD, FS_BRIGHT);  GL.brightU = uniforms(GL.bright);
+        GL.blur   = program(VS_QUAD, FS_BLUR);    GL.blurU   = uniforms(GL.blur);
+        GL.crt    = program(VS_QUAD, FS_CRT);     GL.crtU    = uniforms(GL.crt);
+
+        // fullscreen quad
+        const quad = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
+        quadVAO = gl.createVertexArray();
+        gl.bindVertexArray(quadVAO);
+        const qb = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, qb);
+        gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);   // aPos at loc 0
+
+        // line VAO: interleaved [x,y,alpha,r,g,b] stride 24
+        lineVAO = gl.createVertexArray();
+        gl.bindVertexArray(lineVAO);
+        lineBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, lineBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, LINE_FLOATS * 4, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 24, 0);
+        gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 24, 8);
+        gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 24, 12);
+
+        // point VAO: interleaved [x,y,size,r,g,b] stride 24
+        ptVAO = gl.createVertexArray();
+        gl.bindVertexArray(ptVAO);
+        ptBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, ptBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, PT_FLOATS * 4, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 24, 0);
+        gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 24, 8);
+        gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 24, 12);
+
+        // FX VAOs (cameos) — same interleaved layout, reuse GL.line / GL.pt programs
+        fxLineVAO = gl.createVertexArray();
+        gl.bindVertexArray(fxLineVAO);
+        fxLineBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, fxLineBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, FX_LINE_FLOATS * 4, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 24, 0);
+        gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 24, 8);
+        gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 24, 12);
+
+        fxPtVAO = gl.createVertexArray();
+        gl.bindVertexArray(fxPtVAO);
+        fxPtBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, fxPtBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, FX_PT_FLOATS * 4, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 24, 0);
+        gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 24, 8);
+        gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 24, 12);
+
+        gl.bindVertexArray(null);
+    }
+
+    function freeFBO(f){ if (f){ gl.deleteFramebuffer(f.fb); gl.deleteTexture(f.tex); } }
+
+    function allocFBOs(){
+        freeFBO(fboScene); freeFBO(fboA); freeFBO(fboB);   // avoid leaking on resize
+        const dpr = Math.min(window.devicePixelRatio || 1, CONFIG.dprCap);
+        sw = Math.max(2, Math.floor(window.innerWidth  * dpr));
+        sh = Math.max(2, Math.floor(window.innerHeight * dpr));
+        bw = Math.max(1, sw >> 1);
+        bh = Math.max(1, sh >> 1);
+        canvas.width  = sw; canvas.height = sh;
+        canvas.style.width  = window.innerWidth + 'px';
+        canvas.style.height = window.innerHeight + 'px';
+        fboScene = makeFBO(sw, sh);
+        fboA = makeFBO(bw, bh);
+        fboB = makeFBO(bw, bh);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Node network simulation
+    // ──────────────────────────────────────────────────────────────
+    const N = isMobile ? CONFIG.nodeCountMob : CONFIG.nodeCount;
+    let nodes = [];
+    let adjacency = [];           // per-node neighbour list (rebuilt each frame)
+    let pulses = [];
+    let nextPulse = 0;
+    let mouse = { x: 0.5, y: 0.5, active: false };
+
+    // grid heading: a fixed random orientation chosen at load (no live steering)
+    const cam = { headSend: 0, pitchSend: 0 };
+
+    function rand(a, b){ return a + Math.random() * (b - a); }
+
+    function initNodes(){
+        nodes = [];
+        for (let i = 0; i < N; i++){
+            const ang = Math.random() * Math.PI * 2;
+            const sp  = CONFIG.nodeSpeed * rand(0.4, 1.0);
+            nodes.push({
+                x: rand(CONFIG.bandX[0], CONFIG.bandX[1]),
+                y: rand(CONFIG.bandY[0], CONFIG.bandY[1]),
+                vx: Math.cos(ang) * sp,
+                vy: Math.sin(ang) * sp,
+                r: rand(0, 1),                 // size seed; a few become hubs
+                flash: 0
+            });
+        }
+        pulses = [];
+        nextPulse = rand(CONFIG.pulseEvery[0], CONFIG.pulseEvery[1]);
+        // pick a random grid orientation once per load (so we're not heading straight in)
+        cam.headSend = (Math.random() < 0.5 ? -1 : 1) * rand(CONFIG.headingRange[0], CONFIG.headingRange[1]);
+        cam.pitchSend = 0;
+        initFX();
+    }
+
+    // clip-space helpers (normalized y-down -> clip y-up)
+    const cx = nx => nx * 2 - 1;
+    const cy = ny => 1 - ny * 2;
+
+    function updateSim(dt){
+        const [y0, y1] = CONFIG.bandY, [x0, x1] = CONFIG.bandX;
+        for (const n of nodes){
+            // gentle mouse repel
+            if (mouse.active){
+                const dx = n.x - mouse.x, dy = n.y - mouse.y;
+                const d = Math.hypot(dx, dy);
+                if (d < CONFIG.mouseRepel && d > 1e-4){
+                    const f = (1 - d / CONFIG.mouseRepel) * 0.06;
+                    n.vx += (dx / d) * f * dt * 60;
+                    n.vy += (dy / d) * f * dt * 60;
+                }
+            }
+            n.x += n.vx * dt; n.y += n.vy * dt;
+            // soft bounce inside the band
+            if (n.x < x0){ n.x = x0; n.vx = Math.abs(n.vx); }
+            if (n.x > x1){ n.x = x1; n.vx = -Math.abs(n.vx); }
+            if (n.y < y0){ n.y = y0; n.vy = Math.abs(n.vy); }
+            if (n.y > y1){ n.y = y1; n.vy = -Math.abs(n.vy); }
+            // velocity damping toward base speed so repel doesn't accumulate
+            const v = Math.hypot(n.vx, n.vy), base = CONFIG.nodeSpeed * 0.8;
+            if (v > base * 2.2){ n.vx *= 0.96; n.vy *= 0.96; }
+            n.flash *= Math.pow(0.02, dt);   // ~decay
+        }
+
+        // rebuild adjacency (O(n^2) — fine at this N) with aspect-corrected distance
+        const aspect = sw / sh;
+        const thr = CONFIG.linkDist, thr2 = thr * thr;
+        adjacency = nodes.map(() => []);
+        linkList.length = 0;
+        for (let i = 0; i < N; i++){
+            for (let j = i + 1; j < N; j++){
+                const dx = (nodes[i].x - nodes[j].x) * aspect;
+                const dy = nodes[i].y - nodes[j].y;
+                const d2 = dx * dx + dy * dy;
+                if (d2 < thr2){
+                    const d = Math.sqrt(d2);
+                    const a = Math.pow(1 - d / thr, 1.3) * 0.5;
+                    linkList.push(i, j, a);
+                    adjacency[i].push(j);
+                    adjacency[j].push(i);
+                }
+            }
+        }
+
+        // spawn pulses
+        nextPulse -= dt;
+        if (nextPulse <= 0 && linkList.length && pulses.length < CONFIG.pulseMax){
+            const k = (Math.floor(Math.random() * (linkList.length / 3))) * 3;
+            pulses.push({ a: linkList[k], b: linkList[k + 1], t: 0,
+                          sp: CONFIG.pulseSpeed * rand(0.8, 1.2) });
+            nextPulse = rand(CONFIG.pulseEvery[0], CONFIG.pulseEvery[1]);
+        }
+        // advance pulses
+        for (let i = pulses.length - 1; i >= 0; i--){
+            const p = pulses[i];
+            p.t += p.sp * dt;
+            if (p.t >= 1){
+                nodes[p.b].flash = 1;                    // arrival flash
+                if (Math.random() < CONFIG.cascadeChance && pulses.length < CONFIG.pulseMax){
+                    const nb = adjacency[p.b];
+                    if (nb.length){
+                        const next = nb[Math.floor(Math.random() * nb.length)];
+                        pulses.push({ a: p.b, b: next, t: 0,
+                                      sp: CONFIG.pulseSpeed * rand(0.8, 1.2) });
+                    }
+                }
+                pulses.splice(i, 1);
+            }
+        }
+    }
+
+    const linkList = [];          // flat [i,j,alpha, ...]
+    const lineData = new Float32Array(LINE_FLOATS);
+    const ptData   = new Float32Array(PT_FLOATS);
+
+    function easeOut(t){ return 1 - Math.pow(1 - t, 3); }
+    function easeIn(t){ return t * t; }
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    function buildGeometry(){
+        const C = CONFIG.col;
+        const ox = cam.headSend * 0.18 * 2;   // node field drifts gently with the heading
+        const oy = cam.pitchSend * 0.18 * 2;
+        // lines
+        let li = 0;
+        for (let k = 0; k < linkList.length; k += 3){
+            const i = linkList[k], j = linkList[k + 1], a = linkList[k + 2];
+            // colour lerps cyan->magenta by midpoint x
+            const mx = (nodes[i].x + nodes[j].x) * 0.5;
+            const cr = C.cyan[0] + (C.magenta[0] - C.cyan[0]) * mx;
+            const cg = C.cyan[1] + (C.magenta[1] - C.cyan[1]) * mx;
+            const cb = C.cyan[2] + (C.magenta[2] - C.cyan[2]) * mx;
+            lineData[li++] = cx(nodes[i].x) + ox; lineData[li++] = cy(nodes[i].y) + oy;
+            lineData[li++] = a; lineData[li++] = cr; lineData[li++] = cg; lineData[li++] = cb;
+            lineData[li++] = cx(nodes[j].x) + ox; lineData[li++] = cy(nodes[j].y) + oy;
+            lineData[li++] = a; lineData[li++] = cr; lineData[li++] = cg; lineData[li++] = cb;
+        }
+        const lineVerts = li / 6;
+
+        // node points
+        let pi = 0;
+        const sizeBase = (isMobile ? 4.5 : 5.5) * Math.min(window.devicePixelRatio || 1, CONFIG.dprCap);
+        for (const n of nodes){
+            const hub = n.r > 0.85 ? 1.6 : 1.0;
+            const size = sizeBase * hub * (1 + n.flash * 0.9);
+            // base cyan, flashing toward magenta
+            const f = n.flash;
+            const r = C.cyan[0] + (C.magenta[0] - C.cyan[0]) * f;
+            const g = C.cyan[1] + (C.magenta[1] - C.cyan[1]) * f;
+            const b = C.cyan[2] + (C.magenta[2] - C.cyan[2]) * f;
+            const bright = 0.7 + 0.6 * f;
+            ptData[pi++] = cx(n.x) + ox; ptData[pi++] = cy(n.y) + oy; ptData[pi++] = size;
+            ptData[pi++] = r * bright; ptData[pi++] = g * bright; ptData[pi++] = b * bright;
+        }
+        // pulse points (white-hot, eased)
+        for (const p of pulses){
+            const t = easeOut(Math.min(p.t, 1));
+            const x = nodes[p.a].x + (nodes[p.b].x - nodes[p.a].x) * t;
+            const y = nodes[p.a].y + (nodes[p.b].y - nodes[p.a].y) * t;
+            ptData[pi++] = cx(x) + ox; ptData[pi++] = cy(y) + oy; ptData[pi++] = sizeBase * 1.5;
+            ptData[pi++] = C.hot[0]; ptData[pi++] = C.hot[1]; ptData[pi++] = C.hot[2];
+        }
+        const ptVerts = pi / 6;
+
+        return { lineVerts, ptVerts, lineFloats: li, ptFloats: pi };
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Cameo objects that pass by (own FX buffers; reuse line/pt programs)
+    // ──────────────────────────────────────────────────────────────
+    const fxLineData = new Float32Array(FX_LINE_FLOATS);
+    const fxPtData   = new Float32Array(FX_PT_FLOATS);
+
+    const OCTA_V = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+    const OCTA_E = [[0,2],[0,3],[0,4],[0,5],[1,2],[1,3],[1,4],[1,5],[2,4],[2,5],[3,4],[3,5]];
+
+    // low-poly starships (nose +z = travel/horizon, wings ±x, fin +y, engines at tail -z)
+    const SHIP_MODELS = [
+        { // 0 — Arwing: delta wings + tall tail fin
+          V: [[0,0,1.40],[0,0.18,-0.20],[0,-0.10,-0.90],[0.55,-0.05,-0.55],[-0.55,-0.05,-0.55],
+              [0.16,-0.02,0.30],[-0.16,-0.02,0.30],[0.16,-0.02,-0.70],[-0.16,-0.02,-0.70],
+              [0,0.42,-0.78],[0.22,-0.05,-0.55],[-0.22,-0.05,-0.55]],
+          E: [[0,1],[1,2],[0,5],[0,6],[5,7],[6,8],[5,3],[3,7],[6,4],[4,8],[2,9],[9,7],[9,8],[3,10],[4,11]],
+          ENG: [[0.10,-0.05,-0.90],[-0.10,-0.05,-0.90]] },
+        { // 1 — Interceptor: narrow body, sharply swept wings, twin tail fins
+          V: [[0,0,1.5],[0.10,0,0.2],[-0.10,0,0.2],[0.10,0,-0.9],[-0.10,0,-0.9],
+              [0.62,-0.02,-0.7],[-0.62,-0.02,-0.7],[0.18,0.30,-0.85],[-0.18,0.30,-0.85]],
+          E: [[0,1],[0,2],[1,2],[1,3],[2,4],[3,4],[1,5],[5,3],[2,6],[6,4],[3,7],[4,8],[7,8]],
+          ENG: [[0.10,0,-0.9],[-0.10,0,-0.9]] },
+        { // 2 — Gunship: wide blocky fuselage + side pods
+          V: [[0,0,1.2],[0.25,0.12,0.1],[-0.25,0.12,0.1],[0.25,-0.12,0.1],[-0.25,-0.12,0.1],
+              [0.25,0.12,-0.9],[-0.25,0.12,-0.9],[0.25,-0.12,-0.9],[-0.25,-0.12,-0.9],
+              [0.62,0,-0.5],[-0.62,0,-0.5]],
+          E: [[0,1],[0,2],[0,3],[0,4],[1,2],[3,4],[1,3],[2,4],[1,5],[2,6],[3,7],[4,8],
+              [5,6],[7,8],[5,7],[6,8],[5,9],[7,9],[6,10],[8,10]],
+          ENG: [[0.14,0,-0.9],[-0.14,0,-0.9]] },
+        { // 3 — Needle: long thin fuselage, canards, single engine
+          V: [[0,0,1.7],[0.06,0,0.0],[-0.06,0,0.0],[0.06,0,-1.0],[-0.06,0,-1.0],
+              [0.35,-0.02,-0.3],[-0.35,-0.02,-0.3],[0,0.32,-0.85]],
+          E: [[0,1],[0,2],[1,2],[1,3],[2,4],[3,4],[1,5],[2,6],[3,7],[4,7]],
+          ENG: [[0,0,-1.0]] },
+        { // 4 — X-wing: four wings in an X, twin engines
+          V: [[0,0,1.5],[0.10,0,-0.2],[-0.10,0,-0.2],[0,0,-0.95],
+              [0.62,0.26,-0.7],[-0.62,0.26,-0.7],[0.62,-0.26,-0.7],[-0.62,-0.26,-0.7]],
+          E: [[0,1],[0,2],[1,2],[1,3],[2,3],[1,4],[1,6],[2,5],[2,7],[3,4],[3,5],[3,6],[3,7]],
+          ENG: [[0.10,0,-0.95],[-0.10,0,-0.95]] },
+    ];
+
+    const FX = { stars: [], comets: [], polys: [], cycles: [], glyphs: [], ridge: null,
+                 squad: null, transits: [],
+                 ridgeAmt: 0, ridgeTarget: 0,
+                 nextStar: 0, nextComet: 0, nextPoly: 0, nextCycle: 0, nextGlyph: 0, nextShip: 0, nextTransit: 0, nextRidge: 0 };
+
+    function buildRidge(){
+        // y-down normalized; horizon is at ~0.60, ridge sits just above it (smaller y)
+        const SEG = 120, pts = new Float32Array(SEG + 1);
+        let h = 0.585;
+        for (let i = 0; i <= SEG; i++){
+            h += rand(-0.006, 0.006); h = Math.max(0.555, Math.min(0.595, h));
+            pts[i] = h - 0.018 * (0.5 + 0.5 * Math.sin(i * 0.5));   // occasional peaks
+        }
+        pts[SEG] = pts[0];                                   // seamless wrap
+        FX.ridge = { pts, scroll: 0, span: 2.0 };
+    }
+
+    function initFX(){
+        FX.stars = []; FX.comets = []; FX.polys = []; FX.cycles = []; FX.glyphs = [];
+        FX.nextStar  = rand(CONFIG.starGap[0],  CONFIG.starGap[1]);
+        FX.nextComet = rand(CONFIG.cometGap[0], CONFIG.cometGap[1]);
+        FX.nextPoly  = rand(CONFIG.polyGap[0],  CONFIG.polyGap[1]);
+        FX.nextCycle = rand(CONFIG.cycleGap[0], CONFIG.cycleGap[1]);
+        FX.nextGlyph = rand(CONFIG.glyphGap[0], CONFIG.glyphGap[1]);
+        FX.squad = null;
+        FX.nextShip = 4;                                  // first pass arrives soon; later gaps use shipGap
+        FX.transits = []; FX.nextTransit = rand(3, 8);
+        FX.ridgeAmt = 0; FX.ridgeTarget = Math.random() < CONFIG.ridgePresent ? 1 : 0;
+        FX.nextRidge = rand(25, 60);
+        buildRidge();
+    }
+
+    function updateFX(dt){
+        if (reduced) return;
+        const side = () => Math.random() < 0.5;
+
+        // shooting stars (frequent, fast, sky)
+        FX.nextStar -= dt;
+        if (FX.nextStar <= 0 && FX.stars.length < 2){
+            const L = side();
+            FX.stars.push({ x: L ? -0.1 : 1.1, y: rand(0.08, 0.38),   // upper sky (y-down)
+                vx: (L ? 1 : -1) * rand(1.0, 1.4), vy: rand(0.10, 0.25),  // slight descent
+                depth: rand(0.2, 0.6), col: Math.random() < 0.5 ? CONFIG.col.cyan : CONFIG.col.hot });
+            FX.nextStar = rand(CONFIG.starGap[0], CONFIG.starGap[1]);
+        }
+        // comet (rare, big, slow)
+        FX.nextComet -= dt;
+        if (FX.nextComet <= 0 && FX.comets.length < 1 && !FX.squad){
+            const L = side();
+            FX.comets.push({ x: L ? -0.12 : 1.12, y: rand(0.06, 0.26),   // high sky (y-down)
+                vx: (L ? 1 : -1) * rand(0.20, 0.32), vy: rand(0.03, 0.08), depth: 0.35 });
+            FX.nextComet = rand(CONFIG.cometGap[0], CONFIG.cometGap[1]);
+        }
+        // tumbling wireframe polyhedron (mid)
+        FX.nextPoly -= dt;
+        if (FX.nextPoly <= 0 && FX.polys.length < 1 && !FX.squad){
+            FX.polys.push({ u: -0.15, speed: rand(0.06, 0.10), y: rand(0.20, 0.46),
+                depth: rand(0.45, 0.8), dir: side() ? 1 : -1,
+                rx: rand(0, 6.28), ry: rand(0, 6.28), wx: rand(0.2, 0.5), wy: rand(0.3, 0.6),
+                scale: rand(0.05, 0.09), col: Math.random() < 0.5 ? CONFIG.col.cyan : CONFIG.col.purple });
+            FX.nextPoly = rand(CONFIG.polyGap[0], CONFIG.polyGap[1]);
+        }
+        // light-cycle grid streak (floor)
+        FX.nextCycle -= dt;
+        if (FX.nextCycle <= 0 && FX.cycles.length < 1 && !FX.squad){
+            FX.cycles.push({ u: 0, speed: rand(0.18, 0.30), z: rand(2.5, 6.0), dir: side() ? 1 : -1,
+                col: Math.random() < 0.5 ? CONFIG.col.cyan : CONFIG.col.purple });
+            FX.nextCycle = rand(CONFIG.cycleGap[0], CONFIG.cycleGap[1]);
+        }
+        // glyph cluster (faint, mid/sky) — rarest, lowest key
+        FX.nextGlyph -= dt;
+        if (FX.nextGlyph <= 0 && FX.glyphs.length < 1 && !FX.squad){
+            const L = side(), n = 4 + (Math.random() * 3 | 0), marks = [];
+            for (let i = 0; i < n; i++) marks.push({ dx: rand(-0.03, 0.03), dy: rand(-0.04, 0.04), ph: rand(0, 6.28) });
+            FX.glyphs.push({ x: L ? -0.06 : 1.06, y: rand(0.15, 0.48),
+                vx: (L ? 1 : -1) * rand(0.05, 0.08), marks, col: Math.random() < 0.5 ? CONFIG.col.cyan : CONFIG.col.purple });
+            FX.nextGlyph = rand(CONFIG.glyphGap[0], CONFIG.glyphGap[1]);
+        }
+
+        // Star Fox wingmate squadron (single instance; suppresses lesser cameos while live)
+        if (!FX.squad){
+            FX.nextShip -= dt;                            // 90s gap counts only while sky is empty
+            if (FX.nextShip <= 0) FX.squad = makeSquad();
+        } else {
+            FX.squad.t += dt;
+            if (FX.squad.t > FX.squad.endT + 1){          // all ships arrived, held, and departed
+                FX.squad = null;
+                FX.nextShip = rand(CONFIG.shipGap[0], CONFIG.shipGap[1]);
+            }
+        }
+
+        // sporadic distant ships transiting side-to-side (ambient; runs independently)
+        FX.nextTransit -= dt;
+        if (FX.nextTransit <= 0 && FX.transits.length < 2){
+            const dir = Math.random() < 0.5 ? 1 : -1, z = rand(12, 22);
+            const span = z * 0.6 * (sw / sh) * 0.85;
+            // own heading varies off pure tangent: angle from +z (forward), ~90deg +/- up to ~50deg
+            const sp = rand(0.6, 2.6), dev = rand(-0.9, 0.9);   // varied speed + heading
+            const ang = (dir > 0 ? Math.PI / 2 : -Math.PI / 2) - dir * dev;
+            const ovx = Math.sin(ang) * sp, ovz = Math.cos(ang) * sp;
+            const theta = rand(0, 20) * Math.PI / 180;          // climb randomized 0-20deg (as drawn on screen)
+            const ovy = (Math.abs(ovx) / (sw / sh)) * Math.tan(theta);   // matches on-screen rise to theta
+            const vmag = Math.hypot(ovx, ovy, ovz);
+            FX.transits.push({ x: dir > 0 ? -span : span, z, h: rand(0.10, 0.45),
+                ovx, ovz, ovy,
+                yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
+                pitch: -Math.asin(ovy / vmag),                  // nose + jet aligned to true heading
+                plume: rand(0.5, 1.7),                          // varied jet plume strength
+                model: Math.random() * SHIP_MODELS.length | 0, scaleMul: rand(1.3, 2.1) });
+            FX.nextTransit = rand(CONFIG.transitGap[0], CONFIG.transitGap[1]);
+        }
+        const aspT = sw / sh;
+        for (let i = FX.transits.length - 1; i >= 0; i--){
+            const tr = FX.transits[i];
+            tr.x += tr.ovx * dt; tr.z += (tr.ovz - CONFIG.gridScroll) * dt; tr.h += tr.ovy * dt;
+            const zc = Math.max(0.5, tr.z), inv = 1 / (zc * 0.6);
+            const uvx = 0.5 + cam.headSend + tr.x * inv / aspT;
+            const uvy = (CONFIG.horizon + cam.pitchSend) - 0.20 / zc + tr.h * inv;   // y-up
+            if (tr.z < 2.5 || tr.z > 32 || uvx < -0.4 || uvx > 1.4 || uvy > 1.35) FX.transits.splice(i, 1);
+        }
+
+        // advance / retire
+        const adv = (arr) => { for (let i = arr.length - 1; i >= 0; i--){ const o = arr[i];
+            o.x += o.vx * dt; o.y += o.vy * dt; if (o.x < -0.2 || o.x > 1.2) arr.splice(i, 1); } };
+        adv(FX.stars); adv(FX.comets); adv(FX.glyphs);
+        for (let i = FX.polys.length - 1; i >= 0; i--){ const p = FX.polys[i];
+            p.u += p.speed * dt; p.rx += p.wx * dt; p.ry += p.wy * dt; if (p.u >= 1.15) FX.polys.splice(i, 1); }
+        for (let i = FX.cycles.length - 1; i >= 0; i--){ const c = FX.cycles[i];
+            c.u += c.speed * dt; if (c.u >= 1) FX.cycles.splice(i, 1); }
+
+        // ridge fades in/out as an occasional "mode"
+        if (FX.ridge) FX.ridge.scroll += dt * 0.01;
+        FX.nextRidge -= dt;
+        if (FX.nextRidge <= 0){ FX.ridgeTarget = Math.random() < CONFIG.ridgePresent ? 1 : 0; FX.nextRidge = rand(40, 90); }
+        FX.ridgeAmt += (FX.ridgeTarget - FX.ridgeAmt) * (1 - Math.pow(0.5, dt / 3.0));
+    }
+
+    // project a world point (lateral xw, forward z, height above grid) to clip space,
+    // sharing the grid's perspective, fixed heading, and horizon (used by the squadron)
+    function projectWorld(xw, z, hgt, aspect){
+        const zc = Math.max(0.5, z);
+        const inv = 1.0 / (zc * 0.6);
+        const uvx = 0.5 + cam.headSend + xw * inv / aspect;
+        const uvy = (CONFIG.horizon + cam.pitchSend) - 0.20 / zc + hgt * inv;   // y-up
+        return { x: cx(uvx), y: cy(1 - uvy), inv };
+    }
+
+    // squadron: lead anchor trajectory (APPROACH -> CRUISE -> PEEL/EXIT)
+    function shuffle(a){ for (let i = a.length - 1; i > 0; i--){ const j = Math.random() * (i + 1) | 0; const t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+
+    // each wingman arrives and departs independently (one at a time, random stagger);
+    // the formation holds 10s after the LAST ship arrives, then they peel off one by one.
+    function makeSquad(){
+        const dir = Math.random() < 0.5 ? 1 : -1;
+        const allSlots = [
+            { dxw: 0.0, dz: 0.0,  dh: 0.0,  ps: dir, lead: 1 }, // lead (apex, farthest)
+            { dxw:-0.45,dz:-0.30, dh:-0.03, ps: -1,  lead: 0 },
+            { dxw: 0.45,dz:-0.30, dh:-0.03, ps:  1,  lead: 0 },
+            { dxw:-0.85,dz:-0.60, dh:-0.05, ps: -1,  lead: 0 },
+            { dxw: 0.85,dz:-0.60, dh:-0.05, ps:  1,  lead: 0 },
+        ];
+        const slots = allSlots.slice(0, 2 + (Math.random() * 4 | 0));   // 2..5 ships per pass
+        const n = slots.length, ARR_DUR = 7.0, DEP_DUR = 15.0, HOLD = 10.0;
+        // staggered arrivals, random order, random gaps (one at a time)
+        const arriveAt = new Array(n); let clk = rand(0.5, 1.5);
+        for (const idx of shuffle([...Array(n).keys()])){ arriveAt[idx] = clk; clk += rand(2.5, 5.5); }
+        let lastArrEnd = 0;
+        for (let i = 0; i < n; i++) lastArrEnd = Math.max(lastArrEnd, arriveAt[i] + ARR_DUR);
+        // depart 10s after everyone has arrived; staggered, different random order
+        const departAt = new Array(n); clk = lastArrEnd + HOLD;
+        for (const idx of shuffle([...Array(n).keys()])){ departAt[idx] = clk; clk += rand(2.5, 5.5); }
+        let endT = 0;
+        for (let i = 0; i < n; i++) endT = Math.max(endT, departAt[i] + DEP_DUR);
+        const ships = slots.map((s, i) => {
+            // random arrival vector (offset from the slot): sides / above / below / behind
+            const ang = Math.random() * 6.283, reach = rand(2.2, 4.0);
+            let edx = Math.cos(ang) * reach, edh = Math.sin(ang) * reach * 0.4, edz = -rand(0.6, 1.4);
+            if (Math.random() < 0.4){ edx *= 0.2; edh *= 0.2; edz = -rand(1.1, 1.7); }  // straight from behind
+            return {
+                slot: s, lead: !!s.lead, phase: i * 1.3,
+                model: Math.random() * SHIP_MODELS.length | 0,   // random ship variation
+                col: s.lead ? CONFIG.col.hot : CONFIG.col.cyan,
+                scaleMul: s.lead ? 1.25 : 1.0,
+                arriveAt: arriveAt[i], arrDur: ARR_DUR, departAt: departAt[i], depDur: DEP_DUR,
+                edx, edz, edh,
+            };
+        });
+        return { t: 0, dir, xw0: rand(-0.30, 0.30), baseZ: 1.4, ships, endT };
+    }
+
+    // invert the grid's perspective so floor cameos sit on the moving grid plane
+    function groundToClip(xw, z, aspect){
+        const depth = 0.20 / z - 0.0008;
+        const H0 = CONFIG.horizon + cam.pitchSend;
+        const uvy = H0 - depth;
+        const uvx = 0.5 + cam.headSend + xw / (aspect * z * 0.6);
+        return { x: cx(uvx), y: cy(1 - uvy), vis: uvy > 0.0 && uvy < H0 };  // note: cy expects y-down
+    }
+
+    function buildFX(timeSec){
+        const dprNow = Math.min(window.devicePixelRatio || 1, CONFIG.dprCap);
+        const aspect = sw / sh;
+        let li = 0, pi = 0;
+        // helpers (clip-space in; y already clip for lines, normalized-down for pt via cx/cy at call sites)
+        const pushLineClip = (x0, y0, x1, y1, b, c) => {
+            if (li + 12 > FX_LINE_FLOATS) return;
+            fxLineData[li++] = x0; fxLineData[li++] = y0; fxLineData[li++] = b;
+            fxLineData[li++] = c[0]*b; fxLineData[li++] = c[1]*b; fxLineData[li++] = c[2]*b;
+            fxLineData[li++] = x1; fxLineData[li++] = y1; fxLineData[li++] = b;
+            fxLineData[li++] = c[0]*b; fxLineData[li++] = c[1]*b; fxLineData[li++] = c[2]*b;
+        };
+        // normalized (y-down) line helper
+        const pushLineN = (nx0, ny0, nx1, ny1, b, c) => pushLineClip(cx(nx0), cy(ny0), cx(nx1), cy(ny1), b, c);
+        const pushPt = (nx, ny, size, r, g, b) => {
+            if (pi + 6 > FX_PT_FLOATS) return;
+            fxPtData[pi++] = cx(nx); fxPtData[pi++] = cy(ny); fxPtData[pi++] = size;
+            fxPtData[pi++] = r; fxPtData[pi++] = g; fxPtData[pi++] = b;
+        };
+
+        // --- distant ridge (dim, far, parallax-slow; does NOT bloom) ---
+        if (FX.ridge && FX.ridgeAmt > 0.01){
+            const R = FX.ridge, SEG = R.pts.length - 1, base = R.scroll + cam.headSend * 0.04;
+            const c = CONFIG.col.purple, b = 0.34 * FX.ridgeAmt;
+            for (let i = 0; i < SEG; i++){
+                let x0 = (i / SEG) * R.span - base, x1 = ((i + 1) / SEG) * R.span - base;
+                x0 = ((x0 % 1) + 1) % 1; x1 = ((x1 % 1) + 1) % 1;
+                if (Math.abs(x1 - x0) > 0.5) continue;       // skip wrap seam
+                pushLineN(x0, R.pts[i] - cam.pitchSend, x1, R.pts[i + 1] - cam.pitchSend, b, c);
+            }
+        }
+
+        // --- shooting stars + comet (sky point-trails) ---
+        const drawTrail = (o, headSize, trailN, spacing, mul) => {
+            const dl = Math.hypot(o.vx, o.vy) || 1, ux = -o.vx / dl, uy = -o.vy / dl;
+            const px = o.x + cam.headSend * (0.04 + o.depth * 0.10);
+            for (let k = 0; k < trailN; k++){
+                const f = 1 - k / trailN, br = f * f;
+                const sz = (k === 0 ? headSize : headSize * 0.55 * f) * dprNow;
+                const cc = o.col || CONFIG.col.hot;
+                pushPt(px + ux * spacing * k, o.y + uy * spacing * k, sz,
+                       cc[0] * br * mul, cc[1] * br * mul, cc[2] * br * mul);
+            }
+        };
+        for (const s of FX.stars)  drawTrail(s, 7, 8, 0.012, 1.4);
+        for (const c of FX.comets){            // two-tone: orange core fading toward magenta tail
+            const dl = Math.hypot(c.vx, c.vy) || 1, ux = -c.vx / dl, uy = -c.vy / dl;
+            const px = c.x + cam.headSend * (0.04 + c.depth * 0.10), O = CONFIG.col.orange, M = CONFIG.col.magenta;
+            for (let k = 0; k < 14; k++){
+                const f = 1 - k / 14, br = f * f, mixm = k / 14;
+                const sz = (k === 0 ? 11 : 6 * f) * dprNow;
+                pushPt(px + ux * 0.014 * k, c.y + uy * 0.014 * k, sz,
+                       (O[0]+(M[0]-O[0])*mixm)*br*1.4, (O[1]+(M[1]-O[1])*mixm)*br*1.4, (O[2]+(M[2]-O[2])*mixm)*br*1.4);
+            }
+        }
+
+        // --- tumbling wireframe polyhedra (mid, glowing edges) ---
+        for (const p of FX.polys){
+            const path = p.dir > 0 ? (-0.2 + 1.4 * p.u) : (1.2 - 1.4 * p.u);
+            const ox = path + cam.headSend * (0.04 + p.depth * 0.10), oy = p.y;
+            const cxr = Math.cos(p.rx), sxr = Math.sin(p.rx), cyr = Math.cos(p.ry), syr = Math.sin(p.ry);
+            const edge = Math.min(1, (1 - Math.abs(p.u - 0.5) * 2) * 4);
+            const proj = v => {
+                let x = cyr * v[0] + syr * v[2], z = -syr * v[0] + cyr * v[2];
+                let y = cxr * v[1] - sxr * z; z = sxr * v[1] + cxr * z;
+                const s = p.scale / (1.6 - 0.4 * z);
+                return [ox + x * s / aspect, oy + y * s];
+            };
+            const b = 0.9 * edge;
+            for (const [a, bb] of OCTA_E){ const A = proj(OCTA_V[a]), B = proj(OCTA_V[bb]);
+                pushLineN(A[0], A[1], B[0], B[1], b, p.col); }
+        }
+
+        // --- light-cycle grid streaks (on the floor, perspective-correct) ---
+        for (const c of FX.cycles){
+            const span = c.z * 0.6 * aspect;
+            const headW = c.dir > 0 ? (-span + 2 * span * c.u) : (span - 2 * span * c.u);
+            const TR = 10, step = span * 0.05; let prev = null;
+            for (let k = 0; k < TR; k++){
+                const xw = headW - c.dir * step * k - cam.headSend * 0.5;
+                const g = groundToClip(xw, c.z, aspect);
+                if (!g.vis){ prev = null; continue; }
+                const f = 1 - k / TR, b = (k === 0 ? 1.2 : 0.8 * f);
+                if (prev) pushLineClip(prev.x, prev.y, g.x, g.y, b, c.col);
+                prev = g;
+            }
+        }
+
+        // --- glyph clusters (faint ambient marks) ---
+        for (const gc of FX.glyphs){
+            const px = gc.x + cam.headSend * 0.12;
+            for (const m of gc.marks){
+                const tw = 0.25 + 0.15 * Math.sin(timeSec * 3.0 + m.ph);   // low-key flicker
+                const c = gc.col;
+                pushPt(px + m.dx, gc.y + m.dy, 2.2 * dprNow, c[0]*tw, c[1]*tw, c[2]*tw);
+            }
+        }
+
+        // --- Star Fox wingmate squadron: true low-poly 3D, banks/turns over the grid ---
+        // each vertex is a real world point (lateral xw, forward z, height h), so the ship
+        // foreshortens and re-orients in 3D as it rolls/yaws/pitches.
+        const drawShip = (xw, z, h, roll, yaw, pitch, scaleMul, col, fade, lead, M, plume = 1) => {
+            const Sxy = CONFIG.shipScale * scaleMul, Sz = Sxy * 0.6;
+            const cr = Math.cos(roll), sr = Math.sin(roll);
+            const cyw = Math.cos(yaw), syw = Math.sin(yaw);
+            const cp = Math.cos(pitch), sp = Math.sin(pitch);
+            const rot = v => {                                   // roll(z) -> pitch(x) -> yaw(y)
+                let x = v[0]*cr - v[1]*sr, y = v[0]*sr + v[1]*cr, zz = v[2];
+                const y2 = y*cp - zz*sp;   zz =  y*sp + zz*cp;   y = y2;
+                const x2 = x*cyw + zz*syw; zz = -x*syw + zz*cyw; x = x2;
+                return [x, y, zz];
+            };
+            const proj = v => {
+                const r = rot(v);
+                const wz = z + r[2] * Sz;
+                const C = projectWorld(xw + r[0] * Sxy, wz, h + r[1] * Sxy, aspect);
+                return { x: C.x, y: C.y, wz, inv: C.inv };
+            };
+            const P = M.V.map(proj);
+            const nf = wz => Math.max(0.45, Math.min(1.1, 0.85 + (z - wz) * 2.2));  // near=bright, far=dim
+            const baseB = (lead ? 1.05 : 0.8) * fade;
+            for (const [a, b] of M.E)
+                pushLineClip(P[a].x, P[a].y, P[b].x, P[b].y, baseB * 0.5 * (nf(P[a].wz) + nf(P[b].wz)), col);
+            // twin engine glow (white-hot core; blooms) + short cyan afterburner trail
+            const H = CONFIG.col.hot, Cc = CONFIG.col.cyan;
+            const eb = 1.5 * fade * plume * (0.85 + 0.15 * Math.sin(timeSec * 30 + xw * 7));
+            for (const e of M.ENG){ const pe = proj(e);
+                const esz = Math.max(3, Math.min(22, pe.inv * Sxy * 230 * plume)) * dprNow;
+                pushPt((pe.x + 1) * 0.5, (1 - pe.y) * 0.5, esz, H[0]*eb, H[1]*eb, H[2]*eb); }
+            // long twin afterburner trails — extend straight back along the ship's WORLD heading
+            // (true 3D) so they foreshorten with our perspective like the grid
+            const fwd = rot([0, 0, 1]);                      // nose direction (local +z) in world
+            const TR = 12, segZ = 0.05, segL = 0.04;
+            for (const e of M.ENG){
+                const er = rot(e);
+                const ex = xw + er[0] * Sxy, ez = z + er[2] * Sz, eh = h + er[1] * Sxy;   // engine world pos
+                for (let k = 1; k <= TR; k++){
+                    const T = projectWorld(ex - fwd[0] * segL * k, ez - fwd[2] * segZ * k, eh - fwd[1] * segL * k, aspect);
+                    const f = 1 - k / (TR + 1), tb = f * f * 1.3 * fade * plume, mix = k / TR;
+                    pushPt((T.x + 1) * 0.5, (1 - T.y) * 0.5, Math.min(20, T.inv * Sxy * 150 * plume) * f * dprNow,
+                           (H[0]+(Cc[0]-H[0])*mix)*tb, (H[1]+(Cc[1]-H[1])*mix)*tb, (H[2]+(Cc[2]-H[2])*mix)*tb);
+                }
+            }
+        };
+        if (FX.squad){
+            const sq = FX.squad, t = sq.t;
+            for (const sh of sq.ships){
+                if (t < sh.arriveAt) continue;                                   // not on stage yet
+                const s = sh.slot;
+                const slotXw = sq.xw0 + s.dxw, slotZ = sq.baseZ + s.dz, slotH = CONFIG.shipHeight + s.dh;
+                let xw, z, h, roll = 0, yaw = 0, pitch = 0, fade;
+                if (t < sh.arriveAt + sh.arrDur){                                // ARRIVING (from a random direction)
+                    const p = (t - sh.arriveAt) / sh.arrDur, e = easeOut(p), ie = 1 - e;
+                    xw = slotXw + sh.edx * ie; z = Math.max(0.35, slotZ + sh.edz * ie); h = slotH + sh.edh * ie;
+                    // point the nose along the incoming path, easing to face forward on arrival
+                    const vdx = -sh.edx, vdz = Math.max(0.001, -sh.edz), vdh = -sh.edh;
+                    const fyaw = Math.atan2(vdx, vdz), fpitch = -Math.atan2(vdh, Math.hypot(vdx, vdz));
+                    yaw = fyaw * ie; pitch = fpitch * ie; roll = -fyaw * 0.5 * ie;
+                    fade = Math.min(1, p / 0.2);
+                } else if (t < sh.departAt){                                     // HOLD formation (alive)
+                    xw = slotXw; z = slotZ; h = slotH; fade = 1;
+                    const w = Math.min(1, (t - (sh.arriveAt + sh.arrDur)) / 2.0); // ease wobble in (no snap)
+                    roll = w * 0.14 * Math.sin(t * 0.53 + sh.phase);             // 1/3 of the prior rate
+                    pitch = w * 0.05 * Math.sin(t * 0.37 + sh.phase * 1.3);
+                } else {                                                         // DEPARTING (15s peel-off)
+                    const p = Math.min(1, (t - sh.departAt) / sh.depDur), peel = easeIn(p);
+                    const wob = Math.max(0, 1 - p / 0.2);                        // carry hold wobble out smoothly
+                    xw = slotXw + sq.dir * s.ps * CONFIG.peelSpread * peel;
+                    z  = slotZ + peel * 0.8;
+                    h  = slotH + (sh.lead ? 0.4 : 0.0) * peel + peel * 0.2;
+                    roll  = wob * 0.14 * Math.sin(t * 0.53 + sh.phase) + sq.dir * s.ps * CONFIG.shipMaxRoll * peel;
+                    yaw   = sq.dir * s.ps * 0.7 * peel;
+                    pitch = wob * 0.05 * Math.sin(t * 0.37 + sh.phase * 1.3) - 0.5 * peel;  // nose up on climb-out
+                    fade  = 1 - Math.min(1, Math.max(0, (p - 0.85) / 0.15));
+                }
+                if (fade <= 0.001) continue;
+                drawShip(xw, z, h, roll, yaw, pitch, sh.scaleMul, sh.col, fade, sh.lead, SHIP_MODELS[sh.model]);
+            }
+        }
+        // distant transit ships (nose along their own heading; fade out as they pass near)
+        for (const tr of FX.transits){
+            const fade = 0.55 * Math.min(1, (tr.z - 2.5) / 2.5);
+            if (fade <= 0.01) continue;
+            drawShip(tr.x, tr.z, tr.h, 0, tr.yaw, tr.pitch, tr.scaleMul, CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model], tr.plume);
+        }
+
+        return { lineVerts: li / 6, ptVerts: pi / 6, lineFloats: li, ptFloats: pi };
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Render
+    // ──────────────────────────────────────────────────────────────
+    function drawQuad(){ gl.bindVertexArray(quadVAO); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
+
+    function render(timeSec){
+        const C = CONFIG.col;
+        const geo = buildGeometry();
+
+        // --- Pass 1: scene -> fboScene ---
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fboScene.fb);
+        gl.viewport(0, 0, sw, sh);
+        gl.disable(gl.BLEND);
+        gl.useProgram(GL.scene);
+        gl.uniform2f(GL.sceneU.uRes, sw, sh);
+        gl.uniform1f(GL.sceneU.uTime, timeSec);
+        gl.uniform1f(GL.sceneU.uHeading, cam.headSend);
+        gl.uniform1f(GL.sceneU.uPitch, cam.pitchSend);
+        gl.uniform1f(GL.sceneU.uScroll, reduced ? 0.0 : CONFIG.gridScroll);
+        gl.uniform1f(GL.sceneU.uHorizon, CONFIG.horizon);
+        gl.uniform3fv(GL.sceneU.uCyan, C.cyan);
+        gl.uniform3fv(GL.sceneU.uMagenta, C.magenta);
+        gl.uniform1f(GL.sceneU.uSunOnly, 0.0);
+        drawQuad();
+
+        // network drawn additively on top (into the same FBO so bloom sees it)
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.ONE, gl.ONE);
+        if (geo.lineVerts){
+            gl.useProgram(GL.line);
+            gl.bindVertexArray(lineVAO);
+            gl.bindBuffer(gl.ARRAY_BUFFER, lineBuf);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, lineData, 0, geo.lineFloats);
+            gl.drawArrays(gl.LINES, 0, geo.lineVerts);
+        }
+        if (geo.ptVerts){
+            gl.useProgram(GL.pt);
+            gl.bindVertexArray(ptVAO);
+            gl.bindBuffer(gl.ARRAY_BUFFER, ptBuf);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, ptData, 0, geo.ptFloats);
+            gl.drawArrays(gl.POINTS, 0, geo.ptVerts);
+        }
+
+        // sun disc overlay (alpha-blended) AFTER the network, so dots/lines sit behind the sun
+        gl.useProgram(GL.scene);
+        gl.uniform1f(GL.sceneU.uSunOnly, 1.0);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        drawQuad();
+        gl.blendFunc(gl.ONE, gl.ONE);                       // back to additive for cameos
+
+        // cameo objects — additive into the same FBO so they glow through bloom
+        const fx = buildFX(timeSec);
+        if (fx.lineVerts){
+            gl.useProgram(GL.line);
+            gl.bindVertexArray(fxLineVAO);
+            gl.bindBuffer(gl.ARRAY_BUFFER, fxLineBuf);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, fxLineData, 0, fx.lineFloats);
+            gl.drawArrays(gl.LINES, 0, fx.lineVerts);
+        }
+        if (fx.ptVerts){
+            gl.useProgram(GL.pt);
+            gl.bindVertexArray(fxPtVAO);
+            gl.bindBuffer(gl.ARRAY_BUFFER, fxPtBuf);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, fxPtData, 0, fx.ptFloats);
+            gl.drawArrays(gl.POINTS, 0, fx.ptVerts);
+        }
+        gl.disable(gl.BLEND);
+
+        // --- Pass 2: bright-pass -> fboA (half res) ---
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fboA.fb);
+        gl.viewport(0, 0, bw, bh);
+        gl.useProgram(GL.bright);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, fboScene.tex);
+        gl.uniform1i(GL.brightU.uTex, 0);
+        drawQuad();
+
+        // --- Pass 3: blur H (fboA->fboB) then V (fboB->fboA) ---
+        gl.useProgram(GL.blur);
+        gl.uniform1i(GL.blurU.uTex, 0);
+        // horizontal
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fboB.fb);
+        gl.bindTexture(gl.TEXTURE_2D, fboA.tex);
+        gl.uniform2f(GL.blurU.uDir, 1.0 / bw, 0.0);
+        drawQuad();
+        // vertical
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fboA.fb);
+        gl.bindTexture(gl.TEXTURE_2D, fboB.tex);
+        gl.uniform2f(GL.blurU.uDir, 0.0, 1.0 / bh);
+        drawQuad();
+
+        // --- Pass 4: CRT composite -> screen ---
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, sw, sh);
+        gl.useProgram(GL.crt);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, fboScene.tex);
+        gl.uniform1i(GL.crtU.uScene, 0);
+        gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, fboA.tex);
+        gl.uniform1i(GL.crtU.uBloom, 1);
+        gl.uniform2f(GL.crtU.uRes, sw, sh);
+        gl.uniform1f(GL.crtU.uTime, timeSec);
+        gl.uniform1f(GL.crtU.uReduced, reduced ? 1.0 : 0.0);
+        gl.uniform1f(GL.crtU.uCurve, CONFIG.curvature);
+        gl.uniform1f(GL.crtU.uChroma, CONFIG.chroma);
+        gl.uniform1f(GL.crtU.uScanDepth, CONFIG.scanDepth);
+        gl.uniform1f(GL.crtU.uVignette, CONFIG.vignette);
+        gl.uniform1f(GL.crtU.uBloomStr, CONFIG.bloomStrength);
+        drawQuad();
+        gl.bindVertexArray(null);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Main loop
+    // ──────────────────────────────────────────────────────────────
+    let start = 0, lastFrame = 0, lastSim = 0, raf = 0;
+    const frameMin = 1000 / CONFIG.fpsCap;
+
+    function loop(now){
+        raf = requestAnimationFrame(loop);
+        if (now - lastFrame < frameMin) return;
+        lastFrame = now;
+        if (!start) { start = now; lastSim = now; }
+        const dt = Math.min(0.05, (now - lastSim) / 1000);
+        lastSim = now;
+        const tSec = (now - start) / 1000;
+        updateSim(dt);
+        updateFX(dt);
+        render(tSec);
+    }
+
+    function renderStatic(){
+        // single frame for prefers-reduced-motion (no loop, no cameos)
+        updateSim(0);
+        render(0);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Events
+    // ──────────────────────────────────────────────────────────────
+    function setMouse(clientX, clientY){
+        mouse.x = clientX / window.innerWidth;
+        mouse.y = clientY / window.innerHeight;
+        mouse.active = true;
+    }
+    window.addEventListener('mousemove', e => setMouse(e.clientX, e.clientY));
+    window.addEventListener('mouseleave', () => mouse.active = false);
+    window.addEventListener('touchmove', e => {
+        if (e.touches.length) setMouse(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: true });
+
+    let resizeT;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeT);
+        resizeT = setTimeout(() => {
+            allocFBOs();
+            if (reduced) renderStatic();
+        }, 120);
+    });
+
+    // pause when tab hidden (battery / thermal)
+    document.addEventListener('visibilitychange', () => {
+        if (reduced) return;
+        if (document.hidden){ cancelAnimationFrame(raf); raf = 0; }
+        else if (!raf){ lastFrame = 0; lastSim = performance.now(); raf = requestAnimationFrame(loop); }
+    });
+
+    // WebGL context loss / restore
+    canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); cancelAnimationFrame(raf); raf = 0; }, false);
+    canvas.addEventListener('webglcontextrestored', () => {
+        buildGL(); allocFBOs(); initNodes();
+        if (reduced) renderStatic(); else { lastFrame = 0; start = 0; raf = requestAnimationFrame(loop); }
+    }, false);
+
+    // ──────────────────────────────────────────────────────────────
+    //  Boot
+    // ──────────────────────────────────────────────────────────────
+    try {
+        buildGL();
+        allocFBOs();
+        initNodes();
+        if (reduced) renderStatic();
+        else raf = requestAnimationFrame(loop);
+    } catch (err) {
+        console.error(err);
+        canvas.style.display = 'none';
+        fallback.style.display = 'block';
+    }
+})();
+</script>
+</body>
+</html>
