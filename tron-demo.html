@@ -778,13 +778,17 @@
             const dir = Math.random() < 0.5 ? 1 : -1, z = rand(12, 22);
             const span = z * 0.6 * (sw / sh) * 0.85;
             // own heading varies off pure tangent: angle from +z (forward), ~90deg +/- up to ~50deg
-            const sp = rand(0.9, 1.8), dev = rand(-0.9, 0.9);
+            const sp = rand(0.6, 2.6), dev = rand(-0.9, 0.9);   // varied speed + heading
             const ang = (dir > 0 ? Math.PI / 2 : -Math.PI / 2) - dir * dev;
             const ovx = Math.sin(ang) * sp, ovz = Math.cos(ang) * sp;
             const theta = rand(0, 20) * Math.PI / 180;          // climb randomized 0-20deg (as drawn on screen)
             const ovy = (Math.abs(ovx) / (sw / sh)) * Math.tan(theta);   // matches on-screen rise to theta
+            const vmag = Math.hypot(ovx, ovy, ovz);
             FX.transits.push({ x: dir > 0 ? -span : span, z, h: rand(0.10, 0.45),
-                ovx, ovz, ovy, yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz), pitch: -theta,
+                ovx, ovz, ovy,
+                yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
+                pitch: -Math.asin(ovy / vmag),                  // nose + jet aligned to true heading
+                plume: rand(0.5, 1.7),                          // varied jet plume strength
                 model: Math.random() * SHIP_MODELS.length | 0, scaleMul: rand(1.3, 2.1) });
             FX.nextTransit = rand(CONFIG.transitGap[0], CONFIG.transitGap[1]);
         }
@@ -977,15 +981,15 @@
         // --- Star Fox wingmate squadron: true low-poly 3D, banks/turns over the grid ---
         // each vertex is a real world point (lateral xw, forward z, height h), so the ship
         // foreshortens and re-orients in 3D as it rolls/yaws/pitches.
-        const drawShip = (xw, z, h, roll, yaw, pitch, scaleMul, col, fade, lead, M) => {
+        const drawShip = (xw, z, h, roll, yaw, pitch, scaleMul, col, fade, lead, M, plume = 1) => {
             const Sxy = CONFIG.shipScale * scaleMul, Sz = Sxy * 0.6;
             const cr = Math.cos(roll), sr = Math.sin(roll);
             const cyw = Math.cos(yaw), syw = Math.sin(yaw);
             const cp = Math.cos(pitch), sp = Math.sin(pitch);
-            const rot = v => {                                   // roll(z) -> yaw(y) -> pitch(x)
+            const rot = v => {                                   // roll(z) -> pitch(x) -> yaw(y)
                 let x = v[0]*cr - v[1]*sr, y = v[0]*sr + v[1]*cr, zz = v[2];
-                const x2 = x*cyw + zz*syw; zz = -x*syw + zz*cyw; x = x2;
                 const y2 = y*cp - zz*sp;   zz =  y*sp + zz*cp;   y = y2;
+                const x2 = x*cyw + zz*syw; zz = -x*syw + zz*cyw; x = x2;
                 return [x, y, zz];
             };
             const proj = v => {
@@ -1001,9 +1005,9 @@
                 pushLineClip(P[a].x, P[a].y, P[b].x, P[b].y, baseB * 0.5 * (nf(P[a].wz) + nf(P[b].wz)), col);
             // twin engine glow (white-hot core; blooms) + short cyan afterburner trail
             const H = CONFIG.col.hot, Cc = CONFIG.col.cyan;
-            const eb = 1.5 * fade * (0.85 + 0.15 * Math.sin(timeSec * 30 + xw * 7));
+            const eb = 1.5 * fade * plume * (0.85 + 0.15 * Math.sin(timeSec * 30 + xw * 7));
             for (const e of M.ENG){ const pe = proj(e);
-                const esz = Math.max(3, Math.min(20, pe.inv * Sxy * 230)) * dprNow;
+                const esz = Math.max(3, Math.min(22, pe.inv * Sxy * 230 * plume)) * dprNow;
                 pushPt((pe.x + 1) * 0.5, (1 - pe.y) * 0.5, esz, H[0]*eb, H[1]*eb, H[2]*eb); }
             // long twin afterburner trails — extend straight back along the ship's WORLD heading
             // (true 3D) so they foreshorten with our perspective like the grid
@@ -1014,8 +1018,8 @@
                 const ex = xw + er[0] * Sxy, ez = z + er[2] * Sz, eh = h + er[1] * Sxy;   // engine world pos
                 for (let k = 1; k <= TR; k++){
                     const T = projectWorld(ex - fwd[0] * segL * k, ez - fwd[2] * segZ * k, eh - fwd[1] * segL * k, aspect);
-                    const f = 1 - k / (TR + 1), tb = f * f * 1.3 * fade, mix = k / TR;
-                    pushPt((T.x + 1) * 0.5, (1 - T.y) * 0.5, Math.min(18, T.inv * Sxy * 150) * f * dprNow,
+                    const f = 1 - k / (TR + 1), tb = f * f * 1.3 * fade * plume, mix = k / TR;
+                    pushPt((T.x + 1) * 0.5, (1 - T.y) * 0.5, Math.min(20, T.inv * Sxy * 150 * plume) * f * dprNow,
                            (H[0]+(Cc[0]-H[0])*mix)*tb, (H[1]+(Cc[1]-H[1])*mix)*tb, (H[2]+(Cc[2]-H[2])*mix)*tb);
                 }
             }
@@ -1059,7 +1063,7 @@
         for (const tr of FX.transits){
             const fade = 0.55 * Math.min(1, (tr.z - 2.5) / 2.5);
             if (fade <= 0.01) continue;
-            drawShip(tr.x, tr.z, tr.h, 0, tr.yaw, tr.pitch, tr.scaleMul, CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model]);
+            drawShip(tr.x, tr.z, tr.h, 0, tr.yaw, tr.pitch, tr.scaleMul, CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model], tr.plume);
         }
 
         return { lineVerts: li / 6, ptVerts: pi / 6, lineFloats: li, ptFloats: pi };
