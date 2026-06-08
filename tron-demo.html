@@ -780,18 +780,21 @@
             // own heading varies off pure tangent: angle from +z (forward), ~90deg +/- up to ~50deg
             const sp = rand(0.9, 1.8), dev = rand(-0.9, 0.9);
             const ang = (dir > 0 ? Math.PI / 2 : -Math.PI / 2) - dir * dev;
-            const ovx = Math.sin(ang) * sp, ovz = Math.cos(ang) * sp;
-            FX.transits.push({ x: dir > 0 ? -span : span, z, h: rand(0.12, 0.50),
-                ovx, ovz, yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
+            const phi = rand(0, 0.35), ch = Math.cos(phi);     // upward climb, up to ~20deg
+            const ovx = Math.sin(ang) * sp * ch, ovz = Math.cos(ang) * sp * ch, ovy = Math.sin(phi) * sp;
+            FX.transits.push({ x: dir > 0 ? -span : span, z, h: rand(0.10, 0.45),
+                ovx, ovz, ovy, yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz), pitch: -phi,
                 model: Math.random() * SHIP_MODELS.length | 0, scaleMul: rand(1.3, 2.1) });
             FX.nextTransit = rand(CONFIG.transitGap[0], CONFIG.transitGap[1]);
         }
         const aspT = sw / sh;
         for (let i = FX.transits.length - 1; i >= 0; i--){
             const tr = FX.transits[i];
-            tr.x += tr.ovx * dt; tr.z += (tr.ovz - CONFIG.gridScroll) * dt;   // own heading + our forward drift
-            const uvx = 0.5 + cam.headSend + tr.x / (aspT * Math.max(0.5, tr.z) * 0.6);
-            if (tr.z < 2.5 || tr.z > 32 || uvx < -0.4 || uvx > 1.4) FX.transits.splice(i, 1);
+            tr.x += tr.ovx * dt; tr.z += (tr.ovz - CONFIG.gridScroll) * dt; tr.h += tr.ovy * dt;
+            const zc = Math.max(0.5, tr.z), inv = 1 / (zc * 0.6);
+            const uvx = 0.5 + cam.headSend + tr.x * inv / aspT;
+            const uvy = (CONFIG.horizon + cam.pitchSend) - 0.20 / zc + tr.h * inv;   // y-up
+            if (tr.z < 2.5 || tr.z > 32 || uvx < -0.4 || uvx > 1.4 || uvy > 1.35) FX.transits.splice(i, 1);
         }
 
         // advance / retire
@@ -1055,7 +1058,7 @@
         for (const tr of FX.transits){
             const fade = 0.55 * Math.min(1, (tr.z - 2.5) / 2.5);
             if (fade <= 0.01) continue;
-            drawShip(tr.x, tr.z, tr.h, 0, tr.yaw, 0, tr.scaleMul, CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model]);
+            drawShip(tr.x, tr.z, tr.h, 0, tr.yaw, tr.pitch, tr.scaleMul, CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model]);
         }
 
         return { lineVerts: li / 6, ptVerts: pi / 6, lineFloats: li, ptFloats: pi };
