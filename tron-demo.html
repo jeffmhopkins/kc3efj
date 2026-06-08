@@ -106,7 +106,7 @@
         capHP:         [5, 9],       // formation hits needed to destroy it
         capFireGap:    0.7,          // seconds between the capital's return-fire volleys
         capFireProb:   0.8,          // chance the capital actually fires on each beat
-        capAccuracy:   0.13,         // chance a capital volley destroys the targeted fighter
+        capAccuracy:   0.065,        // chance a capital volley destroys the targeted fighter (normal target)
 
         // ── Star Fox wingmate squadron (flies in from behind, holds formation, peels off) ──
         shipGap:       [90, 90],     // seconds of empty sky between squadron passes
@@ -124,7 +124,8 @@
         blastReact:    0.12,         // lock-on delay before each shot leaves (seconds)
         blastCooldown: 0.5,          // per-ship gap between shots — keeps firing every 1/2s until the kill
         boltSpeed:     26,           // tracer travel speed (world units/sec, +z toward horizon)
-        boltAccuracy:  0.167,        // chance each volley connects, rolled AT IMPACT (~1 in 6)
+        boltAccuracy:  0.083,        // chance a volley destroys a NORMAL target, rolled AT IMPACT (~1 in 12)
+        capHitChance:  0.04,         // chance a formation volley lands a hit on the capital (~1 in 25 per HP)
 
         // palette ("Miami Vice Midnight")
         col: {
@@ -982,7 +983,7 @@
                             detonate(b.tx, b.ty, b.tz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
                         }
                     } else if (tg.cap){                             // formation -> capital (chip away at HP)
-                        if (Math.random() < CONFIG.boltAccuracy){
+                        if (Math.random() < CONFIG.capHitChance){
                             sparkBurst(b.x, b.y, b.z, 6);
                             if (--tg.hp <= 0){
                                 tg.dead = true;
