@@ -83,11 +83,31 @@
         chroma:        0.0016,
         vignette:      0.32,
 
+        // ── wandering camera (slow heading drift; pans grid + sun together) ──
+        camYaw:        0.06,         // max autonomous heading, screen-x fraction
+        camPitch:      0.012,        // max autonomous pitch (vertical), tightly bounded
+        camOmega:      0.55,         // spring stiffness -> ~7s ease into each new aim
+        camReaim:      [12, 28],     // seconds between course decisions
+        camYawClamp:   0.12,         // hard clamp (yaw + mouse) to keep sun on-screen
+        camPitchClamp: 0.022,        // hard clamp protects the z = 0.20/depth grid math
+        mouseGainX:    0.10,         // mouse steering authority (added on top of autopilot)
+        mouseGainY:    0.010,
+        idleResume:    2.5,          // seconds idle before autopilot reclaims the view
+
+        // ── cameo "objects that pass by" (weighted director, mostly one at a time) ──
+        starGap:       [12, 25],     // shooting star spawn gap (s)
+        cometGap:      [180, 360],   // rare big comet (s)
+        polyGap:       [60, 110],    // tumbling wireframe polyhedron (s)
+        cycleGap:      [25, 45],     // light-cycle grid streak (s)
+        glyphGap:      [90, 150],    // drifting glyph cluster (s)
+        ridgePresent:  0.5,          // fraction of time the distant ridge is faded in
+
         // palette ("Miami Vice Midnight")
         col: {
             cyan:    [0.18, 0.89, 0.90],
             magenta: [1.00, 0.18, 0.58],
             purple:  [0.73, 0.40, 1.00],
+            orange:  [1.00, 0.70, 0.29],
             hot:     [1.00, 0.96, 0.90], // signal core (white-hot)
         }
     };
@@ -120,7 +140,8 @@
     out vec4 fragColor;
     uniform vec2  uRes;
     uniform float uTime;
-    uniform vec2  uMouse;     // -1..1 parallax
+    uniform float uHeading;   // signed screen-x fraction: shared yaw (grid VP + sun)
+    uniform float uPitch;     // signed screen-y fraction: shared pitch (bounded)
     uniform float uScroll;
     uniform float uHorizon;
     uniform vec3  uCyan;
@@ -131,14 +152,15 @@
     void main(){
         vec2 uv = vUv;                       // 0..1, y up
         float aspect = uRes.x / uRes.y;
-        float horizon = uHorizon;
+        float horizon = uHorizon + uPitch;   // pitched horizon shared by every layer
         vec3 col;
 
         if (uv.y < horizon) {
             // ---- perspective grid floor ----
             float depth = horizon - uv.y;
             float z  = 0.20 / (depth + 0.0008);
-            float xw = (uv.x - 0.5) * aspect * z * 0.6;
+            // heading slides the vanishing point (scaled by z so far rows fan toward the new aim)
+            float xw = ((uv.x - 0.5) - uHeading) * aspect * z * 0.6;
             float yw = z + uTime * uScroll;
             vec2  g  = vec2(xw, yw);
             vec2  gf = abs(fract(g) - 0.5);
@@ -156,8 +178,9 @@
             vec3 skyTop     = vec3(0.039, 0.004, 0.094);
             col = mix(skyHorizon, skyMid, smoothstep(0.0, 0.45, t));
             col = mix(col, skyTop, smoothstep(0.35, 1.0, t));
-            // ---- stars (upper sky only) ----
-            vec2 sp = floor(uv * vec2(aspect, 1.0) * 140.0);
+            // ---- stars (upper sky only; parallax slightly with the heading) ----
+            vec2 starUv = uv + vec2(uHeading * 0.15, uPitch * 0.15);
+            vec2 sp = floor(starUv * vec2(aspect, 1.0) * 140.0);
             float h = hash(sp);
             float star = step(0.988, h) * smoothstep(0.12, 0.6, t);
             float tw = 0.5 + 0.5 * sin(uTime * 2.5 + h * 40.0);
@@ -165,9 +188,9 @@
         }
 
         // ---- retro sun (overlaid across whole frame so it bleeds over grid) ----
-        float sunX  = 0.5 + uMouse.x * 0.02;
+        float sunX  = 0.5 + uHeading;          // sun sits ON the shared vanishing point
         float sunR  = 0.17;
-        float sunCY = horizon + sunR * 0.55;
+        float sunCY = horizon + sunR * 0.55;   // rides the pitched horizon
         vec2  p = vec2((uv.x - sunX) * aspect, uv.y - sunCY);
         float r = length(p);
         float disc = smoothstep(sunR, sunR - 0.004, r);
@@ -184,7 +207,7 @@
         col = mix(col, sunCol, disc * slit);
         col += vec3(1.0, 0.32, 0.52) * exp(-r * 7.0) * 0.5;     // sun glow
 
-        // bright cyan horizon seam
+        // bright cyan horizon seam (glued to the pitched horizon)
         col += uCyan * exp(-abs(uv.y - horizon) * 220.0) * 0.6;
 
         fragColor = vec4(col, 1.0);
@@ -335,8 +358,8 @@
 
     let GL = {};          // programs + uniform maps, (re)built on context restore
     let fboScene, fboA, fboB;   // framebuffers
-    let quadVAO, lineVAO, ptVAO;
-    let lineBuf, ptBuf;
+    let quadVAO, lineVAO, ptVAO, fxLineVAO, fxPtVAO;
+    let lineBuf, ptBuf, fxLineBuf, fxPtBuf;
     let sw, sh, bw, bh;   // scene + bloom dimensions
 
     function makeFBO(w, h){
@@ -356,6 +379,9 @@
     const NODE_MAX  = CONFIG.nodeCount;
     const LINE_FLOATS = NODE_MAX * NODE_MAX * 6;   // 2 verts * (2 pos+1 alpha+3 col) upper bound, generous
     const PT_FLOATS   = (NODE_MAX + CONFIG.pulseMax) * 6;
+    // separate FX buffers for cameo objects (keeps them off the tight network buffers)
+    const FX_LINE_FLOATS = 4096 * 6;   // ridge + polyhedron edges + light-cycle ribbon
+    const FX_PT_FLOATS   = 512  * 6;   // comet/star heads + trails + glyph clusters
 
     function buildGL(){
         GL.scene  = program(VS_QUAD, FS_SCENE);   GL.sceneU  = uniforms(GL.scene);
@@ -395,6 +421,25 @@
         gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 24, 8);
         gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 24, 12);
 
+        // FX VAOs (cameos) — same interleaved layout, reuse GL.line / GL.pt programs
+        fxLineVAO = gl.createVertexArray();
+        gl.bindVertexArray(fxLineVAO);
+        fxLineBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, fxLineBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, FX_LINE_FLOATS * 4, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 24, 0);
+        gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 24, 8);
+        gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 24, 12);
+
+        fxPtVAO = gl.createVertexArray();
+        gl.bindVertexArray(fxPtVAO);
+        fxPtBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, fxPtBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, FX_PT_FLOATS * 4, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 24, 0);
+        gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 24, 8);
+        gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 24, 12);
+
         gl.bindVertexArray(null);
     }
 
@@ -424,6 +469,10 @@
     let pulses = [];
     let nextPulse = 0;
     let mouse = { x: 0.5, y: 0.5, active: false };
+    let mouseDirty = false, lastMoveT = -1e9, mInfluence = 0;
+
+    // wandering camera: one shared heading drives grid vanishing point + sun together
+    const cam = { h: 0, hv: 0, hT: 0, p: 0, pv: 0, pT: 0, reaim: 0, headSend: 0, pitchSend: 0 };
 
     function rand(a, b){ return a + Math.random() * (b - a); }
 
@@ -443,6 +492,8 @@
         }
         pulses = [];
         nextPulse = rand(CONFIG.pulseEvery[0], CONFIG.pulseEvery[1]);
+        cam.h = cam.hv = cam.p = cam.pv = 0; cam.reaim = 0;
+        initFX();
     }
 
     // clip-space helpers (normalized y-down -> clip y-up)
@@ -529,6 +580,8 @@
 
     function buildGeometry(){
         const C = CONFIG.col;
+        const ox = cam.headSend * 0.18 * 2;   // node field drifts gently with the heading
+        const oy = cam.pitchSend * 0.18 * 2;
         // lines
         let li = 0;
         for (let k = 0; k < linkList.length; k += 3){
@@ -538,9 +591,9 @@
             const cr = C.cyan[0] + (C.magenta[0] - C.cyan[0]) * mx;
             const cg = C.cyan[1] + (C.magenta[1] - C.cyan[1]) * mx;
             const cb = C.cyan[2] + (C.magenta[2] - C.cyan[2]) * mx;
-            lineData[li++] = cx(nodes[i].x); lineData[li++] = cy(nodes[i].y);
+            lineData[li++] = cx(nodes[i].x) + ox; lineData[li++] = cy(nodes[i].y) + oy;
             lineData[li++] = a; lineData[li++] = cr; lineData[li++] = cg; lineData[li++] = cb;
-            lineData[li++] = cx(nodes[j].x); lineData[li++] = cy(nodes[j].y);
+            lineData[li++] = cx(nodes[j].x) + ox; lineData[li++] = cy(nodes[j].y) + oy;
             lineData[li++] = a; lineData[li++] = cr; lineData[li++] = cg; lineData[li++] = cb;
         }
         const lineVerts = li / 6;
@@ -557,7 +610,7 @@
             const g = C.cyan[1] + (C.magenta[1] - C.cyan[1]) * f;
             const b = C.cyan[2] + (C.magenta[2] - C.cyan[2]) * f;
             const bright = 0.7 + 0.6 * f;
-            ptData[pi++] = cx(n.x); ptData[pi++] = cy(n.y); ptData[pi++] = size;
+            ptData[pi++] = cx(n.x) + ox; ptData[pi++] = cy(n.y) + oy; ptData[pi++] = size;
             ptData[pi++] = r * bright; ptData[pi++] = g * bright; ptData[pi++] = b * bright;
         }
         // pulse points (white-hot, eased)
@@ -565,12 +618,254 @@
             const t = easeOut(Math.min(p.t, 1));
             const x = nodes[p.a].x + (nodes[p.b].x - nodes[p.a].x) * t;
             const y = nodes[p.a].y + (nodes[p.b].y - nodes[p.a].y) * t;
-            ptData[pi++] = cx(x); ptData[pi++] = cy(y); ptData[pi++] = sizeBase * 1.5;
+            ptData[pi++] = cx(x) + ox; ptData[pi++] = cy(y) + oy; ptData[pi++] = sizeBase * 1.5;
             ptData[pi++] = C.hot[0]; ptData[pi++] = C.hot[1]; ptData[pi++] = C.hot[2];
         }
         const ptVerts = pi / 6;
 
         return { lineVerts, ptVerts, lineFloats: li, ptFloats: pi };
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Wandering camera (critically-damped steering toward random aims)
+    // ──────────────────────────────────────────────────────────────
+    function springTo(x, v, target, omega, dt){
+        const f = 1 + 2 * dt * omega, oo = omega * omega, hh = dt * oo, det = 1 / (f + hh * dt);
+        return [(f * x + dt * v + hh * dt * target) * det, (v + hh * (target - x)) * det];
+    }
+    const clamp = (x, m) => Math.max(-m, Math.min(m, x));
+
+    function updateCamera(dt, t){
+        if (reduced){ cam.headSend = 0; cam.pitchSend = 0; return; }
+        if (mouseDirty){ lastMoveT = t; mouseDirty = false; }
+        cam.reaim -= dt;
+        if (cam.reaim <= 0){                                   // pick a new course
+            cam.hT = rand(-CONFIG.camYaw, CONFIG.camYaw);
+            cam.pT = rand(-CONFIG.camPitch, CONFIG.camPitch);
+            cam.reaim = rand(CONFIG.camReaim[0], CONFIG.camReaim[1]);
+        }
+        [cam.h, cam.hv] = springTo(cam.h, cam.hv, cam.hT, CONFIG.camOmega, dt);
+        [cam.p, cam.pv] = springTo(cam.p, cam.pv, cam.pT, CONFIG.camOmega * 0.8, dt);
+        // incommensurate breath so a fully-settled spring is never frozen
+        const breathe = Math.sin(t * 0.063) * 0.018 + Math.sin(t * 0.027 + 1.7) * 0.010;
+        const breatheP = Math.sin(t * 0.041) * 0.005;
+        // mouse adds a decaying steering offset on top of autopilot
+        const idle = (t - lastMoveT) > CONFIG.idleResume;
+        const tgt = (mouse.active && !idle) ? 1 : 0;
+        mInfluence += (tgt - mInfluence) * (1 - Math.pow(0.5, dt / 0.6));
+        const mx = (mouse.x - 0.5) * 2, my = (mouse.y - 0.5) * 2;
+        cam.headSend  = clamp(cam.h + breathe  + mInfluence * mx * CONFIG.mouseGainX, CONFIG.camYawClamp);
+        cam.pitchSend = clamp(cam.p + breatheP - mInfluence * my * CONFIG.mouseGainY, CONFIG.camPitchClamp);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Cameo objects that pass by (own FX buffers; reuse line/pt programs)
+    // ──────────────────────────────────────────────────────────────
+    const fxLineData = new Float32Array(FX_LINE_FLOATS);
+    const fxPtData   = new Float32Array(FX_PT_FLOATS);
+
+    const OCTA_V = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+    const OCTA_E = [[0,2],[0,3],[0,4],[0,5],[1,2],[1,3],[1,4],[1,5],[2,4],[2,5],[3,4],[3,5]];
+
+    const FX = { stars: [], comets: [], polys: [], cycles: [], glyphs: [], ridge: null,
+                 ridgeAmt: 0, ridgeTarget: 0,
+                 nextStar: 0, nextComet: 0, nextPoly: 0, nextCycle: 0, nextGlyph: 0, nextRidge: 0 };
+
+    function buildRidge(){
+        // y-down normalized; horizon is at ~0.60, ridge sits just above it (smaller y)
+        const SEG = 120, pts = new Float32Array(SEG + 1);
+        let h = 0.585;
+        for (let i = 0; i <= SEG; i++){
+            h += rand(-0.006, 0.006); h = Math.max(0.555, Math.min(0.595, h));
+            pts[i] = h - 0.018 * (0.5 + 0.5 * Math.sin(i * 0.5));   // occasional peaks
+        }
+        pts[SEG] = pts[0];                                   // seamless wrap
+        FX.ridge = { pts, scroll: 0, span: 2.0 };
+    }
+
+    function initFX(){
+        FX.stars = []; FX.comets = []; FX.polys = []; FX.cycles = []; FX.glyphs = [];
+        FX.nextStar  = rand(CONFIG.starGap[0],  CONFIG.starGap[1]);
+        FX.nextComet = rand(CONFIG.cometGap[0], CONFIG.cometGap[1]);
+        FX.nextPoly  = rand(CONFIG.polyGap[0],  CONFIG.polyGap[1]);
+        FX.nextCycle = rand(CONFIG.cycleGap[0], CONFIG.cycleGap[1]);
+        FX.nextGlyph = rand(CONFIG.glyphGap[0], CONFIG.glyphGap[1]);
+        FX.ridgeAmt = 0; FX.ridgeTarget = Math.random() < CONFIG.ridgePresent ? 1 : 0;
+        FX.nextRidge = rand(25, 60);
+        buildRidge();
+    }
+
+    function updateFX(dt){
+        if (reduced) return;
+        const side = () => Math.random() < 0.5;
+
+        // shooting stars (frequent, fast, sky)
+        FX.nextStar -= dt;
+        if (FX.nextStar <= 0 && FX.stars.length < 2){
+            const L = side();
+            FX.stars.push({ x: L ? -0.1 : 1.1, y: rand(0.08, 0.38),   // upper sky (y-down)
+                vx: (L ? 1 : -1) * rand(1.0, 1.4), vy: rand(0.10, 0.25),  // slight descent
+                depth: rand(0.2, 0.6), col: Math.random() < 0.5 ? CONFIG.col.cyan : CONFIG.col.hot });
+            FX.nextStar = rand(CONFIG.starGap[0], CONFIG.starGap[1]);
+        }
+        // comet (rare, big, slow)
+        FX.nextComet -= dt;
+        if (FX.nextComet <= 0 && FX.comets.length < 1){
+            const L = side();
+            FX.comets.push({ x: L ? -0.12 : 1.12, y: rand(0.06, 0.26),   // high sky (y-down)
+                vx: (L ? 1 : -1) * rand(0.20, 0.32), vy: rand(0.03, 0.08), depth: 0.35 });
+            FX.nextComet = rand(CONFIG.cometGap[0], CONFIG.cometGap[1]);
+        }
+        // tumbling wireframe polyhedron (mid)
+        FX.nextPoly -= dt;
+        if (FX.nextPoly <= 0 && FX.polys.length < 1){
+            FX.polys.push({ u: -0.15, speed: rand(0.06, 0.10), y: rand(0.20, 0.46),
+                depth: rand(0.45, 0.8), dir: side() ? 1 : -1,
+                rx: rand(0, 6.28), ry: rand(0, 6.28), wx: rand(0.2, 0.5), wy: rand(0.3, 0.6),
+                scale: rand(0.05, 0.09), col: Math.random() < 0.5 ? CONFIG.col.cyan : CONFIG.col.purple });
+            FX.nextPoly = rand(CONFIG.polyGap[0], CONFIG.polyGap[1]);
+        }
+        // light-cycle grid streak (floor)
+        FX.nextCycle -= dt;
+        if (FX.nextCycle <= 0 && FX.cycles.length < 1){
+            FX.cycles.push({ u: 0, speed: rand(0.18, 0.30), z: rand(2.5, 6.0), dir: side() ? 1 : -1,
+                col: Math.random() < 0.5 ? CONFIG.col.cyan : CONFIG.col.purple });
+            FX.nextCycle = rand(CONFIG.cycleGap[0], CONFIG.cycleGap[1]);
+        }
+        // glyph cluster (faint, mid/sky) — rarest, lowest key
+        FX.nextGlyph -= dt;
+        if (FX.nextGlyph <= 0 && FX.glyphs.length < 1){
+            const L = side(), n = 4 + (Math.random() * 3 | 0), marks = [];
+            for (let i = 0; i < n; i++) marks.push({ dx: rand(-0.03, 0.03), dy: rand(-0.04, 0.04), ph: rand(0, 6.28) });
+            FX.glyphs.push({ x: L ? -0.06 : 1.06, y: rand(0.15, 0.48),
+                vx: (L ? 1 : -1) * rand(0.05, 0.08), marks, col: Math.random() < 0.5 ? CONFIG.col.cyan : CONFIG.col.purple });
+            FX.nextGlyph = rand(CONFIG.glyphGap[0], CONFIG.glyphGap[1]);
+        }
+
+        // advance / retire
+        const adv = (arr) => { for (let i = arr.length - 1; i >= 0; i--){ const o = arr[i];
+            o.x += o.vx * dt; o.y += o.vy * dt; if (o.x < -0.2 || o.x > 1.2) arr.splice(i, 1); } };
+        adv(FX.stars); adv(FX.comets); adv(FX.glyphs);
+        for (let i = FX.polys.length - 1; i >= 0; i--){ const p = FX.polys[i];
+            p.u += p.speed * dt; p.rx += p.wx * dt; p.ry += p.wy * dt; if (p.u >= 1.15) FX.polys.splice(i, 1); }
+        for (let i = FX.cycles.length - 1; i >= 0; i--){ const c = FX.cycles[i];
+            c.u += c.speed * dt; if (c.u >= 1) FX.cycles.splice(i, 1); }
+
+        // ridge fades in/out as an occasional "mode"
+        if (FX.ridge) FX.ridge.scroll += dt * 0.01;
+        FX.nextRidge -= dt;
+        if (FX.nextRidge <= 0){ FX.ridgeTarget = Math.random() < CONFIG.ridgePresent ? 1 : 0; FX.nextRidge = rand(40, 90); }
+        FX.ridgeAmt += (FX.ridgeTarget - FX.ridgeAmt) * (1 - Math.pow(0.5, dt / 3.0));
+    }
+
+    // invert the grid's perspective so floor cameos sit on the moving grid plane
+    function groundToClip(xw, z, aspect){
+        const depth = 0.20 / z - 0.0008;
+        const H0 = CONFIG.horizon + cam.pitchSend;
+        const uvy = H0 - depth;
+        const uvx = 0.5 + cam.headSend + xw / (aspect * z * 0.6);
+        return { x: cx(uvx), y: cy(1 - uvy), vis: uvy > 0.0 && uvy < H0 };  // note: cy expects y-down
+    }
+
+    function buildFX(timeSec){
+        const dprNow = Math.min(window.devicePixelRatio || 1, CONFIG.dprCap);
+        const aspect = sw / sh;
+        let li = 0, pi = 0;
+        // helpers (clip-space in; y already clip for lines, normalized-down for pt via cx/cy at call sites)
+        const pushLineClip = (x0, y0, x1, y1, b, c) => {
+            if (li + 12 > FX_LINE_FLOATS) return;
+            fxLineData[li++] = x0; fxLineData[li++] = y0; fxLineData[li++] = b;
+            fxLineData[li++] = c[0]*b; fxLineData[li++] = c[1]*b; fxLineData[li++] = c[2]*b;
+            fxLineData[li++] = x1; fxLineData[li++] = y1; fxLineData[li++] = b;
+            fxLineData[li++] = c[0]*b; fxLineData[li++] = c[1]*b; fxLineData[li++] = c[2]*b;
+        };
+        // normalized (y-down) line helper
+        const pushLineN = (nx0, ny0, nx1, ny1, b, c) => pushLineClip(cx(nx0), cy(ny0), cx(nx1), cy(ny1), b, c);
+        const pushPt = (nx, ny, size, r, g, b) => {
+            if (pi + 6 > FX_PT_FLOATS) return;
+            fxPtData[pi++] = cx(nx); fxPtData[pi++] = cy(ny); fxPtData[pi++] = size;
+            fxPtData[pi++] = r; fxPtData[pi++] = g; fxPtData[pi++] = b;
+        };
+
+        // --- distant ridge (dim, far, parallax-slow; does NOT bloom) ---
+        if (FX.ridge && FX.ridgeAmt > 0.01){
+            const R = FX.ridge, SEG = R.pts.length - 1, base = R.scroll + cam.headSend * 0.04;
+            const c = CONFIG.col.purple, b = 0.34 * FX.ridgeAmt;
+            for (let i = 0; i < SEG; i++){
+                let x0 = (i / SEG) * R.span - base, x1 = ((i + 1) / SEG) * R.span - base;
+                x0 = ((x0 % 1) + 1) % 1; x1 = ((x1 % 1) + 1) % 1;
+                if (Math.abs(x1 - x0) > 0.5) continue;       // skip wrap seam
+                pushLineN(x0, R.pts[i] - cam.pitchSend, x1, R.pts[i + 1] - cam.pitchSend, b, c);
+            }
+        }
+
+        // --- shooting stars + comet (sky point-trails) ---
+        const drawTrail = (o, headSize, trailN, spacing, mul) => {
+            const dl = Math.hypot(o.vx, o.vy) || 1, ux = -o.vx / dl, uy = -o.vy / dl;
+            const px = o.x + cam.headSend * (0.04 + o.depth * 0.10);
+            for (let k = 0; k < trailN; k++){
+                const f = 1 - k / trailN, br = f * f;
+                const sz = (k === 0 ? headSize : headSize * 0.55 * f) * dprNow;
+                const cc = o.col || CONFIG.col.hot;
+                pushPt(px + ux * spacing * k, o.y + uy * spacing * k, sz,
+                       cc[0] * br * mul, cc[1] * br * mul, cc[2] * br * mul);
+            }
+        };
+        for (const s of FX.stars)  drawTrail(s, 7, 8, 0.012, 1.4);
+        for (const c of FX.comets){            // two-tone: orange core fading toward magenta tail
+            const dl = Math.hypot(c.vx, c.vy) || 1, ux = -c.vx / dl, uy = -c.vy / dl;
+            const px = c.x + cam.headSend * (0.04 + c.depth * 0.10), O = CONFIG.col.orange, M = CONFIG.col.magenta;
+            for (let k = 0; k < 14; k++){
+                const f = 1 - k / 14, br = f * f, mixm = k / 14;
+                const sz = (k === 0 ? 11 : 6 * f) * dprNow;
+                pushPt(px + ux * 0.014 * k, c.y + uy * 0.014 * k, sz,
+                       (O[0]+(M[0]-O[0])*mixm)*br*1.4, (O[1]+(M[1]-O[1])*mixm)*br*1.4, (O[2]+(M[2]-O[2])*mixm)*br*1.4);
+            }
+        }
+
+        // --- tumbling wireframe polyhedra (mid, glowing edges) ---
+        for (const p of FX.polys){
+            const path = p.dir > 0 ? (-0.2 + 1.4 * p.u) : (1.2 - 1.4 * p.u);
+            const ox = path + cam.headSend * (0.04 + p.depth * 0.10), oy = p.y;
+            const cxr = Math.cos(p.rx), sxr = Math.sin(p.rx), cyr = Math.cos(p.ry), syr = Math.sin(p.ry);
+            const edge = Math.min(1, (1 - Math.abs(p.u - 0.5) * 2) * 4);
+            const proj = v => {
+                let x = cyr * v[0] + syr * v[2], z = -syr * v[0] + cyr * v[2];
+                let y = cxr * v[1] - sxr * z; z = sxr * v[1] + cxr * z;
+                const s = p.scale / (1.6 - 0.4 * z);
+                return [ox + x * s / aspect, oy + y * s];
+            };
+            const b = 0.9 * edge;
+            for (const [a, bb] of OCTA_E){ const A = proj(OCTA_V[a]), B = proj(OCTA_V[bb]);
+                pushLineN(A[0], A[1], B[0], B[1], b, p.col); }
+        }
+
+        // --- light-cycle grid streaks (on the floor, perspective-correct) ---
+        for (const c of FX.cycles){
+            const span = c.z * 0.6 * aspect;
+            const headW = c.dir > 0 ? (-span + 2 * span * c.u) : (span - 2 * span * c.u);
+            const TR = 10, step = span * 0.05; let prev = null;
+            for (let k = 0; k < TR; k++){
+                const xw = headW - c.dir * step * k - cam.headSend * 0.5;
+                const g = groundToClip(xw, c.z, aspect);
+                if (!g.vis){ prev = null; continue; }
+                const f = 1 - k / TR, b = (k === 0 ? 1.2 : 0.8 * f);
+                if (prev) pushLineClip(prev.x, prev.y, g.x, g.y, b, c.col);
+                prev = g;
+            }
+        }
+
+        // --- glyph clusters (faint ambient marks) ---
+        for (const gc of FX.glyphs){
+            const px = gc.x + cam.headSend * 0.12;
+            for (const m of gc.marks){
+                const tw = 0.25 + 0.15 * Math.sin(timeSec * 3.0 + m.ph);   // low-key flicker
+                const c = gc.col;
+                pushPt(px + m.dx, gc.y + m.dy, 2.2 * dprNow, c[0]*tw, c[1]*tw, c[2]*tw);
+            }
+        }
+
+        return { lineVerts: li / 6, ptVerts: pi / 6, lineFloats: li, ptFloats: pi };
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -589,7 +884,8 @@
         gl.useProgram(GL.scene);
         gl.uniform2f(GL.sceneU.uRes, sw, sh);
         gl.uniform1f(GL.sceneU.uTime, timeSec);
-        gl.uniform2f(GL.sceneU.uMouse, (mouse.x - 0.5) * 2, (mouse.y - 0.5) * 2);
+        gl.uniform1f(GL.sceneU.uHeading, cam.headSend);
+        gl.uniform1f(GL.sceneU.uPitch, cam.pitchSend);
         gl.uniform1f(GL.sceneU.uScroll, reduced ? 0.0 : CONFIG.gridScroll);
         gl.uniform1f(GL.sceneU.uHorizon, CONFIG.horizon);
         gl.uniform3fv(GL.sceneU.uCyan, C.cyan);
@@ -612,6 +908,23 @@
             gl.bindBuffer(gl.ARRAY_BUFFER, ptBuf);
             gl.bufferSubData(gl.ARRAY_BUFFER, 0, ptData, 0, geo.ptFloats);
             gl.drawArrays(gl.POINTS, 0, geo.ptVerts);
+        }
+
+        // cameo objects — additive into the same FBO so they glow through bloom
+        const fx = buildFX(timeSec);
+        if (fx.lineVerts){
+            gl.useProgram(GL.line);
+            gl.bindVertexArray(fxLineVAO);
+            gl.bindBuffer(gl.ARRAY_BUFFER, fxLineBuf);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, fxLineData, 0, fx.lineFloats);
+            gl.drawArrays(gl.LINES, 0, fx.lineVerts);
+        }
+        if (fx.ptVerts){
+            gl.useProgram(GL.pt);
+            gl.bindVertexArray(fxPtVAO);
+            gl.bindBuffer(gl.ARRAY_BUFFER, fxPtBuf);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, fxPtData, 0, fx.ptFloats);
+            gl.drawArrays(gl.POINTS, 0, fx.ptVerts);
         }
         gl.disable(gl.BLEND);
 
@@ -670,12 +983,16 @@
         if (!start) { start = now; lastSim = now; }
         const dt = Math.min(0.05, (now - lastSim) / 1000);
         lastSim = now;
+        const tSec = (now - start) / 1000;
+        updateCamera(dt, tSec);
         updateSim(dt);
-        render((now - start) / 1000);
+        updateFX(dt);
+        render(tSec);
     }
 
     function renderStatic(){
-        // single frame for prefers-reduced-motion (no loop, no pulses)
+        // single frame for prefers-reduced-motion (no loop, no drift, no cameos)
+        updateCamera(0, 0);
         updateSim(0);
         render(0);
     }
@@ -687,6 +1004,7 @@
         mouse.x = clientX / window.innerWidth;
         mouse.y = clientY / window.innerHeight;
         mouse.active = true;
+        mouseDirty = true;
     }
     window.addEventListener('mousemove', e => setMouse(e.clientX, e.clientY));
     window.addEventListener('mouseleave', () => mouse.active = false);
