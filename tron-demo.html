@@ -942,10 +942,15 @@
             for (const e of SHIP_ENGINES){ const pe = proj(e);
                 const esz = Math.max(3, Math.min(20, pe.inv * Sxy * 230)) * dprNow;
                 pushPt((pe.x + 1) * 0.5, (1 - pe.y) * 0.5, esz, H[0]*eb, H[1]*eb, H[2]*eb); }
-            for (let k = 1; k <= 4; k++){
-                const T = projectWorld(xw, z - k * 0.05, h, aspect), f = 1 - k / 5, tb = f * f * 1.2 * fade;
-                pushPt((T.x + 1) * 0.5, (1 - T.y) * 0.5, Math.min(16, T.inv * Sxy * 160) * f * dprNow,
-                       Cc[0]*tb, Cc[1]*tb, Cc[2]*tb);
+            const TR = 11, tstep = 0.42;                    // long twin afterburner trails
+            for (const e of SHIP_ENGINES){
+                for (let k = 1; k <= TR; k++){
+                    const r = rot([e[0], e[1], e[2] - k * tstep]);   // extend back along -forward axis
+                    const T = projectWorld(xw + r[0]*Sxy, z + r[2]*Sz, h + r[1]*Sxy, aspect);
+                    const f = 1 - k / (TR + 1), tb = f * f * 1.3 * fade, mix = k / TR;
+                    pushPt((T.x + 1) * 0.5, (1 - T.y) * 0.5, Math.min(16, T.inv * Sxy * 150) * f * dprNow,
+                           (H[0]+(Cc[0]-H[0])*mix)*tb, (H[1]+(Cc[1]-H[1])*mix)*tb, (H[2]+(Cc[2]-H[2])*mix)*tb);
+                }
             }
         };
         if (FX.squad){
