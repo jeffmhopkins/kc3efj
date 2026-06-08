@@ -141,6 +141,7 @@
     uniform float uTime;
     uniform float uHeading;   // signed screen-x fraction: shared yaw (grid VP + sun)
     uniform float uPitch;     // signed screen-y fraction: shared pitch (bounded)
+    uniform float uSunOnly;   // 1 = render only the sun disc (overlay pass over the network)
     uniform float uScroll;
     uniform float uHorizon;
     uniform vec3  uCyan;
@@ -210,11 +211,14 @@
             float lines = fract(uv.y * 55.0);
             slit = 1.0 - step(lines, clamp(k * 0.95, 0.0, 0.85));
         }
-        col = mix(col, sunCol, disc * slit);
-        col += vec3(1.0, 0.32, 0.52) * exp(-r * 7.0) * 0.5;     // sun glow
+        if (uSunOnly > 0.5) {                                   // overlay pass: just the disc, on top of the network
+            fragColor = vec4(sunCol, disc * slit);
+            return;
+        }
 
-        // bright cyan horizon seam (glued to the pitched horizon)
-        col += uCyan * exp(-abs(uv.y - horizon) * 220.0) * 0.6;
+        // base pass: glow stays behind the network; disc is drawn later (overlay) so dots/lines sit behind it
+        col += vec3(1.0, 0.32, 0.52) * exp(-r * 7.0) * 0.5;     // sun glow
+        col += uCyan * exp(-abs(uv.y - horizon) * 220.0) * 0.6; // bright cyan horizon seam
 
         fragColor = vec4(col, 1.0);
     }`;
@@ -1019,6 +1023,7 @@
         gl.uniform1f(GL.sceneU.uHorizon, CONFIG.horizon);
         gl.uniform3fv(GL.sceneU.uCyan, C.cyan);
         gl.uniform3fv(GL.sceneU.uMagenta, C.magenta);
+        gl.uniform1f(GL.sceneU.uSunOnly, 0.0);
         drawQuad();
 
         // network drawn additively on top (into the same FBO so bloom sees it)
@@ -1038,6 +1043,13 @@
             gl.bufferSubData(gl.ARRAY_BUFFER, 0, ptData, 0, geo.ptFloats);
             gl.drawArrays(gl.POINTS, 0, geo.ptVerts);
         }
+
+        // sun disc overlay (alpha-blended) AFTER the network, so dots/lines sit behind the sun
+        gl.useProgram(GL.scene);
+        gl.uniform1f(GL.sceneU.uSunOnly, 1.0);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        drawQuad();
+        gl.blendFunc(gl.ONE, gl.ONE);                       // back to additive for cameos
 
         // cameo objects — additive into the same FBO so they glow through bloom
         const fx = buildFX(timeSec);
