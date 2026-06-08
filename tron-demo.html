@@ -83,16 +83,8 @@
         chroma:        0.0016,
         vignette:      0.32,
 
-        // ── wandering camera (banks like a plane between headings; pans grid + sun) ──
-        camYaw:        0.20,         // max autonomous heading, screen-x fraction
-        camPitch:      0.018,        // max autonomous pitch (vertical), tightly bounded
-        camOmega:      0.70,         // spring stiffness -> ~5.7s decisive turn into each aim
-        camReaim:      [5, 12],      // seconds between course decisions (turns often)
-        camYawClamp:   0.28,         // hard clamp (yaw + mouse) keeps sun on-screen
-        camPitchClamp: 0.022,        // hard clamp protects the z = 0.20/depth grid math
-        mouseGainX:    0.10,         // mouse steering authority (added on top of autopilot)
-        mouseGainY:    0.010,
-        idleResume:    2.5,          // seconds idle before autopilot reclaims the view
+        // ── grid heading: randomized ONCE on load so we travel at an angle, not straight ──
+        headingRange:  [0.09, 0.22], // random |yaw| picked at startup (screen-x fraction)
 
         // ── cameo "objects that pass by" (weighted director, mostly one at a time) ──
         starGap:       [12, 25],     // shooting star spawn gap (s)
@@ -476,10 +468,9 @@
     let pulses = [];
     let nextPulse = 0;
     let mouse = { x: 0.5, y: 0.5, active: false };
-    let mouseDirty = false, lastMoveT = -1e9, mInfluence = 0;
 
-    // wandering camera: one shared heading drives grid vanishing point + sun together
-    const cam = { h: 0, hv: 0, hT: 0, p: 0, pv: 0, pT: 0, reaim: 0, headSend: 0, pitchSend: 0 };
+    // grid heading: a fixed random orientation chosen at load (no live steering)
+    const cam = { headSend: 0, pitchSend: 0 };
 
     function rand(a, b){ return a + Math.random() * (b - a); }
 
@@ -499,7 +490,9 @@
         }
         pulses = [];
         nextPulse = rand(CONFIG.pulseEvery[0], CONFIG.pulseEvery[1]);
-        cam.h = cam.hv = cam.p = cam.pv = 0; cam.reaim = 0;
+        // pick a random grid orientation once per load (so we're not heading straight in)
+        cam.headSend = (Math.random() < 0.5 ? -1 : 1) * rand(CONFIG.headingRange[0], CONFIG.headingRange[1]);
+        cam.pitchSend = 0;
         initFX();
     }
 
@@ -631,40 +624,6 @@
         const ptVerts = pi / 6;
 
         return { lineVerts, ptVerts, lineFloats: li, ptFloats: pi };
-    }
-
-    // ──────────────────────────────────────────────────────────────
-    //  Wandering camera (critically-damped steering toward random aims)
-    // ──────────────────────────────────────────────────────────────
-    function springTo(x, v, target, omega, dt){
-        const f = 1 + 2 * dt * omega, oo = omega * omega, hh = dt * oo, det = 1 / (f + hh * dt);
-        return [(f * x + dt * v + hh * dt * target) * det, (v + hh * (target - x)) * det];
-    }
-    const clamp = (x, m) => Math.max(-m, Math.min(m, x));
-
-    function updateCamera(dt, t){
-        if (reduced){ cam.headSend = 0; cam.pitchSend = 0; return; }
-        if (mouseDirty){ lastMoveT = t; mouseDirty = false; }
-        cam.reaim -= dt;
-        if (cam.reaim <= 0){                                   // bank into a new course
-            // bias the new heading to the opposite side so the turn is decisive (plane-like)
-            const sign = cam.h > 0 ? -1 : (cam.h < 0 ? 1 : (Math.random() < 0.5 ? 1 : -1));
-            cam.hT = sign * rand(CONFIG.camYaw * 0.5, CONFIG.camYaw);
-            cam.pT = rand(-CONFIG.camPitch, CONFIG.camPitch);
-            cam.reaim = rand(CONFIG.camReaim[0], CONFIG.camReaim[1]);
-        }
-        [cam.h, cam.hv] = springTo(cam.h, cam.hv, cam.hT, CONFIG.camOmega, dt);
-        [cam.p, cam.pv] = springTo(cam.p, cam.pv, cam.pT, CONFIG.camOmega * 0.8, dt);
-        // incommensurate breath so a fully-settled spring is never frozen
-        const breathe = Math.sin(t * 0.063) * 0.018 + Math.sin(t * 0.027 + 1.7) * 0.010;
-        const breatheP = Math.sin(t * 0.041) * 0.005;
-        // mouse adds a decaying steering offset on top of autopilot
-        const idle = (t - lastMoveT) > CONFIG.idleResume;
-        const tgt = (mouse.active && !idle) ? 1 : 0;
-        mInfluence += (tgt - mInfluence) * (1 - Math.pow(0.5, dt / 0.6));
-        const mx = (mouse.x - 0.5) * 2, my = (mouse.y - 0.5) * 2;
-        cam.headSend  = clamp(cam.h + breathe  + mInfluence * mx * CONFIG.mouseGainX, CONFIG.camYawClamp);
-        cam.pitchSend = clamp(cam.p + breatheP - mInfluence * my * CONFIG.mouseGainY, CONFIG.camPitchClamp);
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -993,15 +952,13 @@
         const dt = Math.min(0.05, (now - lastSim) / 1000);
         lastSim = now;
         const tSec = (now - start) / 1000;
-        updateCamera(dt, tSec);
         updateSim(dt);
         updateFX(dt);
         render(tSec);
     }
 
     function renderStatic(){
-        // single frame for prefers-reduced-motion (no loop, no drift, no cameos)
-        updateCamera(0, 0);
+        // single frame for prefers-reduced-motion (no loop, no cameos)
         updateSim(0);
         render(0);
     }
@@ -1013,7 +970,6 @@
         mouse.x = clientX / window.innerWidth;
         mouse.y = clientY / window.innerHeight;
         mouse.active = true;
-        mouseDirty = true;
     }
     window.addEventListener('mousemove', e => setMouse(e.clientX, e.clientY));
     window.addEventListener('mouseleave', () => mouse.active = false);
