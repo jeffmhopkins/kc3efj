@@ -784,8 +784,12 @@
             const theta = rand(0, 20) * Math.PI / 180;          // climb randomized 0-20deg (as drawn on screen)
             const ovy = (Math.abs(ovx) / (sw / sh)) * Math.tan(theta);   // matches on-screen rise to theta
             const vmag = Math.hypot(ovx, ovy, ovz);
+            // bank into the crossing so the wing planform faces us — a near-tangent heading
+            // viewed edge-on (roll 0) collapses the flat hull to a thin line. Tilt the dorsal
+            // side toward the camera (sign = -dir), magnitude enough to show the wings.
+            const roll = -dir * rand(0.55, 1.0);
             FX.transits.push({ x: dir > 0 ? -span : span, z, h: rand(0.10, 0.45),
-                ovx, ovz, ovy,
+                ovx, ovz, ovy, roll,
                 yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
                 pitch: -Math.asin(ovy / vmag),                  // nose + jet aligned to true heading
                 plume: rand(0.5, 1.7),                          // varied jet plume strength
@@ -1063,7 +1067,7 @@
         for (const tr of FX.transits){
             const fade = 0.55 * Math.min(1, (tr.z - 2.5) / 2.5);
             if (fade <= 0.01) continue;
-            drawShip(tr.x, tr.z, tr.h, 0, tr.yaw, tr.pitch, tr.scaleMul, CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model], tr.plume);
+            drawShip(tr.x, tr.z, tr.h, tr.roll, tr.yaw, tr.pitch, tr.scaleMul, CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model], tr.plume);
         }
 
         return { lineVerts: li / 6, ptVerts: pi / 6, lineFloats: li, ptFloats: pi };
