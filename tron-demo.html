@@ -100,6 +100,7 @@
         shipHeight:    0.30,         // formation cruise altitude above the grid
         shipMaxRoll:   1.15,         // peel-off bank angle (radians, ~66deg)
         peelSpread:    2.6,          // lateral world divergence at full peel-off
+        transitGap:    [7, 18],      // sporadic distant ships transiting side-to-side
 
         // palette ("Miami Vice Midnight")
         col: {
@@ -681,9 +682,9 @@
     ];
 
     const FX = { stars: [], comets: [], polys: [], cycles: [], glyphs: [], ridge: null,
-                 squad: null,
+                 squad: null, transits: [],
                  ridgeAmt: 0, ridgeTarget: 0,
-                 nextStar: 0, nextComet: 0, nextPoly: 0, nextCycle: 0, nextGlyph: 0, nextShip: 0, nextRidge: 0 };
+                 nextStar: 0, nextComet: 0, nextPoly: 0, nextCycle: 0, nextGlyph: 0, nextShip: 0, nextTransit: 0, nextRidge: 0 };
 
     function buildRidge(){
         // y-down normalized; horizon is at ~0.60, ridge sits just above it (smaller y)
@@ -706,6 +707,7 @@
         FX.nextGlyph = rand(CONFIG.glyphGap[0], CONFIG.glyphGap[1]);
         FX.squad = null;
         FX.nextShip = 4;                                  // first pass arrives soon; later gaps use shipGap
+        FX.transits = []; FX.nextTransit = rand(3, 8);
         FX.ridgeAmt = 0; FX.ridgeTarget = Math.random() < CONFIG.ridgePresent ? 1 : 0;
         FX.nextRidge = rand(25, 60);
         buildRidge();
@@ -768,6 +770,21 @@
                 FX.squad = null;
                 FX.nextShip = rand(CONFIG.shipGap[0], CONFIG.shipGap[1]);
             }
+        }
+
+        // sporadic distant ships transiting side-to-side (ambient; runs independently)
+        FX.nextTransit -= dt;
+        if (FX.nextTransit <= 0 && FX.transits.length < 2){
+            const dir = Math.random() < 0.5 ? 1 : -1, z = rand(7, 14);
+            const span = z * 0.6 * (sw / sh) * 0.85;
+            FX.transits.push({ x: dir > 0 ? -span : span, z, h: rand(0.12, 0.50),
+                vx: dir * rand(0.8, 1.6), dir, span,
+                model: Math.random() * SHIP_MODELS.length | 0, scaleMul: rand(1.3, 2.1) });
+            FX.nextTransit = rand(CONFIG.transitGap[0], CONFIG.transitGap[1]);
+        }
+        for (let i = FX.transits.length - 1; i >= 0; i--){
+            const tr = FX.transits[i]; tr.x += tr.vx * dt;
+            if ((tr.dir > 0 && tr.x > tr.span) || (tr.dir < 0 && tr.x < -tr.span)) FX.transits.splice(i, 1);
         }
 
         // advance / retire
@@ -1026,6 +1043,11 @@
                 if (fade <= 0.001) continue;
                 drawShip(xw, z, h, roll, yaw, pitch, sh.scaleMul, sh.col, fade, sh.lead, SHIP_MODELS[sh.model]);
             }
+        }
+        // distant transit ships (nose turned along travel; dim, far)
+        for (const tr of FX.transits){
+            const yaw = tr.dir > 0 ? 1.5708 : -1.5708;
+            drawShip(tr.x, tr.z, tr.h, 0, yaw, 0, tr.scaleMul, CONFIG.col.cyan, 0.55, false, SHIP_MODELS[tr.model]);
         }
 
         return { lineVerts: li / 6, ptVerts: pi / 6, lineFloats: li, ptFloats: pi };
