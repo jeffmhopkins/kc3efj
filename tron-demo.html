@@ -69,7 +69,7 @@
         nodeSpeed:     0.018,     // normalized units / second
         mouseRepel:    0.12,      // repel radius (normalized)
 
-        bandY:         [0.16, 0.74], // node field vertical band (keeps it a "network")
+        bandY:         [0.08, 0.55], // node field band — kept above the horizon (~0.60 y-down)
         bandX:         [0.06, 0.94],
 
         pulseEvery:    [1.4, 3.0],   // seconds between new signal pulses
@@ -740,7 +740,7 @@
         }
         if (FX.squad){
             FX.squad.t += dt;
-            if (FX.squad.t > 8.8) FX.squad = null;       // total flyby duration
+            if (FX.squad.t > 9.5) FX.squad = null;       // total flyby duration
         }
 
         // advance / retire
@@ -773,28 +773,27 @@
     function makeSquad(){
         const dir = Math.random() < 0.5 ? 1 : -1;
         const slots = [
-            { dxw: 0.0, dz: 0.0,  dh: 0.0,  ps: dir, pd: 0.0,  climb: 1 }, // lead
-            { dxw:-0.5, dz:-0.45, dh:-0.03, ps: -1,  pd: 0.35, climb: 0 },
-            { dxw: 0.5, dz:-0.45, dh:-0.03, ps:  1,  pd: 0.70, climb: 0 },
-            { dxw:-1.0, dz:-0.90, dh:-0.05, ps: -1,  pd: 1.05, climb: 0 },
-            { dxw: 1.0, dz:-0.90, dh:-0.05, ps:  1,  pd: 1.40, climb: 0 },
+            { dxw: 0.0, dz: 0.0,  dh: 0.0,  ps: dir, pd: 0.0,  climb: 1 }, // lead (apex, farthest)
+            { dxw:-0.45,dz:-0.30, dh:-0.03, ps: -1,  pd: 0.35, climb: 0 },
+            { dxw: 0.45,dz:-0.30, dh:-0.03, ps:  1,  pd: 0.70, climb: 0 },
+            { dxw:-0.85,dz:-0.60, dh:-0.05, ps: -1,  pd: 1.05, climb: 0 },
+            { dxw: 0.85,dz:-0.60, dh:-0.05, ps:  1,  pd: 1.40, climb: 0 },
         ];
         const ships = slots.map((s, i) => ({
-            slot: s, lead: i === 0,
+            slot: s, lead: i === 0, phase: i * 1.3,
             col: i === 0 ? CONFIG.col.hot : CONFIG.col.cyan,
             scaleMul: i === 0 ? 1.25 : 1.0,
         }));
-        return { t: 0, dir, xw0: rand(-0.35, 0.35), ships };
+        return { t: 0, dir, xw0: rand(-0.30, 0.30), ships };
     }
+    // squadron starts already up-front in formation (hold), then pulls ahead and peels
     function squadAnchor(sq){
-        const t = sq.t, PA = 1.6, PC = 4.0;
+        const t = sq.t, PH = 4.5;
         let zL, hL, xwL = sq.xw0;
-        if (t < PA){ const p = t / PA;
-            zL = lerp(0.85, 1.9, easeOut(p)); hL = lerp(0.04, CONFIG.shipHeight, p); }
-        else if (t < PA + PC){ const p = (t - PA) / PC;
-            zL = lerp(1.9, 2.35, p); hL = CONFIG.shipHeight; xwL += 0.12 * Math.sin(p * 6.283 * 0.6); }
-        else { const p = Math.min(1, (t - PA - PC) / 3.2);
-            zL = lerp(2.35, 4.2, easeIn(p)); hL = CONFIG.shipHeight + 0.10 * p; }
+        if (t < PH){ const p = t / PH;                       // hold formation up front
+            zL = lerp(1.2, 1.6, p); hL = CONFIG.shipHeight; xwL += 0.06 * Math.sin(p * 6.283 * 0.5); }
+        else { const p = Math.min(1, (t - PH) / 4.0);        // recede + climb out
+            zL = lerp(1.6, 4.4, easeIn(p)); hL = CONFIG.shipHeight + 0.15 * p; }
         return { zL, hL, xwL };
     }
 
@@ -905,44 +904,60 @@
             }
         }
 
-        // --- Star Fox wingmate squadron (banks over the grid, then peels off) ---
-        const drawShip = (xw, z, h, bank, yaw, scaleMul, col, fade, lead) => {
-            const C = projectWorld(xw, z, h, aspect);
-            const sc = Math.min(0.45, Math.max(0.03, CONFIG.shipScale * scaleMul * C.inv));
-            const cb = Math.cos(bank), sb = Math.sin(bank), cyw = Math.cos(yaw), syw = Math.sin(yaw);
-            const proj = v => {                                   // bank-roll then yaw, billboard scale
-                const rx = v[0]*cb - v[1]*sb, ry = v[0]*sb + v[1]*cb, rz = v[2];
-                const fx = rx*cyw + rz*syw, fz = -rx*syw + rz*cyw;
-                return { x: C.x + fx*sc/aspect, y: C.y + ry*sc, d: fz };
+        // --- Star Fox wingmate squadron: true low-poly 3D, banks/turns over the grid ---
+        // each vertex is a real world point (lateral xw, forward z, height h), so the ship
+        // foreshortens and re-orients in 3D as it rolls/yaws/pitches.
+        const drawShip = (xw, z, h, roll, yaw, pitch, scaleMul, col, fade, lead) => {
+            const Sxy = CONFIG.shipScale * scaleMul, Sz = Sxy * 0.6;
+            const cr = Math.cos(roll), sr = Math.sin(roll);
+            const cyw = Math.cos(yaw), syw = Math.sin(yaw);
+            const cp = Math.cos(pitch), sp = Math.sin(pitch);
+            const rot = v => {                                   // roll(z) -> yaw(y) -> pitch(x)
+                let x = v[0]*cr - v[1]*sr, y = v[0]*sr + v[1]*cr, zz = v[2];
+                const x2 = x*cyw + zz*syw; zz = -x*syw + zz*cyw; x = x2;
+                const y2 = y*cp - zz*sp;   zz =  y*sp + zz*cp;   y = y2;
+                return [x, y, zz];
+            };
+            const proj = v => {
+                const r = rot(v);
+                const wz = z + r[2] * Sz;
+                const C = projectWorld(xw + r[0] * Sxy, wz, h + r[1] * Sxy, aspect);
+                return { x: C.x, y: C.y, wz, inv: C.inv };
             };
             const P = SHIP_V.map(proj);
-            const nf = d => Math.max(0.45, Math.min(1.1, 0.85 - d*0.30));   // depth-fade edges
+            const nf = wz => Math.max(0.45, Math.min(1.1, 0.85 + (z - wz) * 2.2));  // near=bright, far=dim
             const baseB = (lead ? 1.05 : 0.8) * fade;
             for (const [a, b] of SHIP_E)
-                pushLineClip(P[a].x, P[a].y, P[b].x, P[b].y, baseB * 0.5 * (nf(P[a].d) + nf(P[b].d)), col);
-            // twin engine glow (white-hot core; blooms toward cyan), + short afterburner trail
+                pushLineClip(P[a].x, P[a].y, P[b].x, P[b].y, baseB * 0.5 * (nf(P[a].wz) + nf(P[b].wz)), col);
+            // twin engine glow (white-hot core; blooms) + short cyan afterburner trail
             const H = CONFIG.col.hot, Cc = CONFIG.col.cyan;
             const eb = 1.5 * fade * (0.85 + 0.15 * Math.sin(timeSec * 30 + xw * 7));
-            const esz = Math.max(3, Math.min(16, sc * 90)) * dprNow;
             for (const e of SHIP_ENGINES){ const pe = proj(e);
+                const esz = Math.max(3, Math.min(20, pe.inv * Sxy * 230)) * dprNow;
                 pushPt((pe.x + 1) * 0.5, (1 - pe.y) * 0.5, esz, H[0]*eb, H[1]*eb, H[2]*eb); }
             for (let k = 1; k <= 4; k++){
-                const T = projectWorld(xw, z - k * 0.06, h, aspect), f = 1 - k / 5, tb = f * f * 1.2 * fade;
-                pushPt((T.x + 1) * 0.5, (1 - T.y) * 0.5, esz * 0.7 * f, Cc[0]*tb, Cc[1]*tb, Cc[2]*tb);
+                const T = projectWorld(xw, z - k * 0.05, h, aspect), f = 1 - k / 5, tb = f * f * 1.2 * fade;
+                pushPt((T.x + 1) * 0.5, (1 - T.y) * 0.5, Math.min(16, T.inv * Sxy * 160) * f * dprNow,
+                       Cc[0]*tb, Cc[1]*tb, Cc[2]*tb);
             }
         };
         if (FX.squad){
-            const sq = FX.squad, t = sq.t, A = squadAnchor(sq), PEEL = 5.6;
+            const sq = FX.squad, t = sq.t, A = squadAnchor(sq), PEEL = 4.5;
             for (const sh of sq.ships){
                 const s = sh.slot;
                 const peel = easeIn(Math.min(1, Math.max(0, (t - (PEEL + s.pd)) / 1.6)));
-                const fade = 1 - Math.min(1, Math.max(0, (t - (PEEL + s.pd) - 0.9) / 0.9));
+                const fade = Math.min(1, t / 0.5) * (1 - Math.min(1, Math.max(0, (t - (PEEL + s.pd) - 1.2) / 1.0)));
                 if (fade <= 0.001) continue;
+                const cruise = t < PEEL;
+                const wobR = cruise ? 0.14 * Math.sin(t * 1.6 + sh.phase) : 0;   // alive banking
+                const wobP = cruise ? 0.05 * Math.sin(t * 1.1 + sh.phase * 1.3) : 0;
                 const xw = A.xwL + s.dxw + sq.dir * s.ps * CONFIG.peelSpread * peel;
-                const z  = A.zL + s.dz + peel * 0.6;
-                const h  = A.hL + s.dh + s.climb * peel * 0.5 + peel * 0.15;
-                drawShip(xw, z, h, sq.dir * s.ps * CONFIG.shipMaxRoll * peel, sq.dir * s.ps * 0.6 * peel,
-                         sh.scaleMul, sh.col, fade, sh.lead);
+                const z  = A.zL + s.dz + peel * 0.8;
+                const h  = A.hL + s.dh + s.climb * peel * 0.4 + peel * 0.2;
+                const roll  = wobR + sq.dir * s.ps * CONFIG.shipMaxRoll * peel;
+                const yaw   = sq.dir * s.ps * 0.7 * peel;
+                const pitch = wobP - 0.5 * peel;                                 // nose up on climb-out
+                drawShip(xw, z, h, roll, yaw, pitch, sh.scaleMul, sh.col, fade, sh.lead);
             }
         }
 
