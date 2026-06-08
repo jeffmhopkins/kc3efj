@@ -95,15 +95,18 @@
         ridgePresent:  0.5,          // fraction of time the distant ridge is faded in
 
         // ── background depth: drifting nebula clouds + a parallax near-star layer ──
-        nebulaCount:   5,            // soft colored cloud clusters behind the sky
+        nebulaCount:   11,           // soft colored cloud clusters behind the sky (busy)
         nearStars:     34,           // brighter foreground stars that drift/twinkle over the shader field
 
-        // ── sky weather (occasional fade-in moods, like the ridge) ──
-        auroraPresent: 0.4,          // fraction of time the aurora curtains are up
+        // ── sky weather ──
         lightningGap:  [16, 48],     // gap between distant lightning flickers (s)
 
-        // ── capital-ship flyby (huge wireframe dreadnought crossing the far horizon) ──
-        capitalGap:    [70, 140],    // seconds between dreadnought passes
+        // ── capital-ship flyby (huge ominous dreadnought; can fire on the formation) ──
+        capitalGap:    [120, 300],   // seconds between dreadnought passes (random, up to ~5 min)
+        capHP:         [5, 9],       // formation hits needed to destroy it
+        capFireGap:    0.7,          // seconds between the capital's return-fire volleys
+        capFireProb:   0.8,          // chance the capital actually fires on each beat
+        capAccuracy:   0.13,         // chance a capital volley destroys the targeted fighter
 
         // ── Star Fox wingmate squadron (flies in from behind, holds formation, peels off) ──
         shipGap:       [90, 90],     // seconds of empty sky between squadron passes
@@ -130,6 +133,7 @@
             purple:  [0.73, 0.40, 1.00],
             orange:  [1.00, 0.70, 0.29],
             hot:     [1.00, 0.96, 0.90], // signal core (white-hot)
+            cap:     [0.95, 0.13, 0.10], // ominous capital-ship red
         }
     };
 
@@ -412,8 +416,8 @@
     const LINE_FLOATS = NODE_MAX * NODE_MAX * 6;   // 2 verts * (2 pos+1 alpha+3 col) upper bound, generous
     const PT_FLOATS   = (NODE_MAX + CONFIG.pulseMax) * 6;
     // separate FX buffers for cameo objects (keeps them off the tight network buffers)
-    const FX_LINE_FLOATS = 6144 * 6;   // ridge + polyhedra + light-cycle + aurora + capital ship
-    const FX_PT_FLOATS   = 2560 * 6;   // trails + blast rings/shrapnel + nebula + near-stars + embers
+    const FX_LINE_FLOATS = 6144 * 6;   // ridge + polyhedra + light-cycle + capital ship + tracers
+    const FX_PT_FLOATS   = 3584 * 6;   // trails + blast rings/shrapnel + nebula + near-stars + embers + capital boom
     const FX_TRI_FLOATS  = 2048 * 6;   // translucent ship hull fills (3 verts/face)
 
     function buildGL(){
@@ -735,10 +739,10 @@
 
     const FX = { stars: [], comets: [], polys: [], cycles: [], glyphs: [], ridge: null,
                  squad: null, transits: [], bolts: [], blasts: [], embers: [], groundSparks: [],
-                 nebula: [], nearStars: [], aurora: null, lightning: null, capital: null,
-                 ridgeAmt: 0, ridgeTarget: 0, auroraAmt: 0, auroraTarget: 0,
+                 nebula: [], nearStars: [], lightning: null, capital: null,
+                 ridgeAmt: 0, ridgeTarget: 0,
                  nextStar: 0, nextComet: 0, nextPoly: 0, nextCycle: 0, nextGlyph: 0, nextShip: 0, nextTransit: 0,
-                 nextRidge: 0, nextAurora: 0, nextLightning: 0, nextCapital: 0 };
+                 nextRidge: 0, nextLightning: 0, nextCapital: 0 };
 
     function buildRidge(){
         // y-down normalized; horizon is at ~0.60, ridge sits just above it (smaller y)
@@ -767,16 +771,16 @@
         FX.nextRidge = rand(25, 60);
         buildRidge();
 
-        // background depth: soft nebula clouds (clusters of faint point-blobs) + a near-star layer
+        // background depth: many soft, faint nebula clouds (clusters of point-blobs) + a near-star layer
         FX.nebula = [];
         const NCOL = [CONFIG.col.cyan, CONFIG.col.purple, CONFIG.col.magenta];
         for (let i = 0; i < CONFIG.nebulaCount; i++){
-            const blobs = [], n = 4 + (Math.random() * 4 | 0);
+            const blobs = [], n = 5 + (Math.random() * 6 | 0);        // busier: more blobs per cloud
             for (let j = 0; j < n; j++)
-                blobs.push({ dx: rand(-0.05, 0.05), dy: rand(-0.035, 0.035), sz: rand(42, 78) });
-            FX.nebula.push({ x: Math.random(), y: rand(0.05, 0.34), depth: rand(0.2, 0.9),
-                drift: rand(0.004, 0.012) * (Math.random() < 0.5 ? 1 : -1), col: NCOL[Math.random() * 3 | 0],
-                br: rand(0.03, 0.065), blobs });
+                blobs.push({ dx: rand(-0.07, 0.07), dy: rand(-0.045, 0.045), sz: rand(38, 80) });
+            FX.nebula.push({ x: Math.random(), y: rand(0.04, 0.40), depth: rand(0.2, 0.95),
+                drift: rand(0.004, 0.013) * (Math.random() < 0.5 ? 1 : -1), col: NCOL[Math.random() * 3 | 0],
+                br: rand(0.012, 0.032), blobs });                     // more transparent
         }
         FX.nearStars = [];
         for (let i = 0; i < CONFIG.nearStars; i++)
@@ -784,22 +788,11 @@
                 drift: rand(0.003, 0.010) * (Math.random() < 0.5 ? 1 : -1), ph: rand(0, 6.28), rate: rand(0.5, 2.0),
                 mag: rand(0.4, 1.0), col: Math.random() < 0.3 ? CONFIG.col.cyan : CONFIG.col.hot });
 
-        // weather: aurora curtains (fade-in mood) + occasional distant lightning
-        buildAurora();
-        FX.auroraAmt = 0; FX.auroraTarget = Math.random() < CONFIG.auroraPresent ? 1 : 0;
-        FX.nextAurora = rand(20, 50); FX.lightning = null; FX.nextLightning = rand(CONFIG.lightningGap[0], CONFIG.lightningGap[1]);
+        // weather: occasional distant lightning
+        FX.lightning = null; FX.nextLightning = rand(CONFIG.lightningGap[0], CONFIG.lightningGap[1]);
 
-        // capital-ship flyby
-        FX.capital = null; FX.nextCapital = rand(20, 45);   // first one fairly soon, later gaps use capitalGap
-    }
-
-    function buildAurora(){
-        // vertical shimmering curtains high in the sky; each band is a column with a wavy envelope
-        const N = 46, bands = [];
-        for (let i = 0; i < N; i++)
-            bands.push({ x: i / N, top: rand(0.04, 0.12), bot: rand(0.30, 0.42),
-                ph: rand(0, 6.28), rate: rand(0.4, 1.1), amp: rand(0.6, 1.0), hue: rand(0, 1) });
-        FX.aurora = { bands, scroll: 0 };
+        // capital-ship flyby (appears randomly within ~5 min)
+        FX.capital = null; FX.nextCapital = rand(30, 300);
     }
 
     function updateFX(dt){
@@ -895,52 +888,85 @@
             if (tr.dead || tr.z < 2.5 || tr.z > 32 || uvx < -0.4 || uvx > 1.4 || uvy > 1.35) FX.transits.splice(i, 1);
         }
 
-        // ── formation blasters: holding ships snipe transits crossing ahead ──
+        // ── space battle: formation snipes crossing craft; the capital ship fires back ──
+        const CY = CONFIG.col.cyan, CAPC = CONFIG.col.cap;
         if (FX.squad){
-            const sq = FX.squad, t = sq.t, gs = reduced ? 0 : CONFIG.gridScroll;
-            const holding = sh => t >= sh.arriveAt + sh.arrDur && t < sh.departAt;   // alive, formed up
+            const sq = FX.squad, t = sq.t, gs = reduced ? 0 : CONFIG.gridScroll, aspB = sw / sh;
+            const holding = sh => !sh.dead && t >= sh.arriveAt + sh.arrDur && t < sh.departAt;  // alive, formed up
             const cosCone = Math.cos(CONFIG.blastCone);
-            for (const tr of FX.transits){
-                if (tr.fireCool) tr.fireCool = Math.max(0, tr.fireCool - dt);  // per-target re-fire timer
-                if (tr.dead || tr.z < 4) continue;
-                // nearest holding ship whose forward cone (off +z) contains the target
+            const slotPos = sh => { const s = sh.slot; return { x: sq.xw0 + s.dxw, z: sq.baseZ + s.dz, h: CONFIG.shipHeight + s.dh }; };
+            // nearest holding ship whose forward cone contains a world point; returns {best, seen}
+            const acquire = (x, z, h) => {
                 let best = null, bestDot = cosCone, seen = false;
                 for (const sh of sq.ships){
                     if (!holding(sh)) continue;
-                    const s = sh.slot;
-                    const sx = sq.xw0 + s.dxw, sz = sq.baseZ + s.dz, shh = CONFIG.shipHeight + s.dh;
-                    const dx = tr.x - sx, dz = tr.z - sz, dh = tr.h - shh;
-                    if (dz <= 0.3) continue;                            // target must sit ahead
-                    const dot = dz / Math.hypot(dx, dz, dh);            // cos(angle off forward)
+                    const sp = slotPos(sh), dx = x - sp.x, dz = z - sp.z, dh = h - sp.h;
+                    if (dz <= 0.3) continue;
+                    const dot = dz / Math.hypot(dx, dz, dh);
                     if (dot <= cosCone) continue;
                     seen = true;
-                    if (dot > bestDot){ bestDot = dot; best = { sh, sx, sz, shh }; }
+                    if (dot > bestDot){ bestDot = dot; best = { sh, sx: sp.x, sz: sp.z, shh: sp.h }; }
                 }
-                // engage-or-ignore decided once, the first time the transit is in any cone
-                if (tr.engaged === undefined && seen) tr.engaged = Math.random() < CONFIG.blastChance;
-                if (!tr.engaged || !best || tr.fireCool > 0) continue;  // not engaged / no shooter / still cooling
-                tr.fireCool = CONFIG.blastCooldown;                     // next opportunity in 1/2s either way
-                if (Math.random() >= CONFIG.blastFireProb) continue;    // held fire on this beat
-                // fire a volley — one per blastCooldown until the target dies or leaves the cone
-                const Sxy = CONFIG.shipScale * best.sh.scaleMul, vz = tr.ovz - gs;
-                const mz = best.sz + Sxy * 1.3, mh = best.shh;         // muzzle just ahead of the nose
-                let T = 0.3;                                           // iterate flight-time vs lead for fast crossers
+                return { best, seen };
+            };
+            // twin tracers from `from` (muzzle origin {x,h,z}) to a lead intercept of a moving target
+            const fireVolley = (from, muzOff, tgt, tvx, tvy, tvz, target, kind, col) => {
+                let T = 0.3;
                 for (let k = 0; k < 3; k++){
-                    const px = tr.x + tr.ovx * T, py = tr.h + tr.ovy * T, pz = tr.z + vz * T;
-                    T = Math.hypot(px - best.sx, py - mh, pz - mz) / CONFIG.boltSpeed;
+                    const px = tgt.x + tvx * T, py = tgt.h + tvy * T, pz = tgt.z + tvz * T;
+                    T = Math.hypot(px - from.x, py - from.h, pz - from.z) / CONFIG.boltSpeed;
                 }
-                const ax = tr.x + tr.ovx * T, ay = tr.h + tr.ovy * T, az = tr.z + vz * T;
-                let primary = true;                                    // only one bolt of the pair rolls the kill
+                const ax = tgt.x + tvx * T, ay = tgt.h + tvy * T, az = tgt.z + tvz * T;
+                let primary = true;
                 for (const sgn of [-1, 1]){
-                    const ox = best.sx + sgn * Sxy * 0.45;
-                    FX.bolts.push({ x0: ox, y0: mh, z0: mz, x: ox, y: mh, z: mz,
-                        tx: ax, ty: ay, tz: az, T, age: 0, delay: CONFIG.blastReact,
-                        target: tr, decisive: primary });
+                    FX.bolts.push({ x0: from.x + sgn * muzOff, y0: from.h, z0: from.z, x: from.x + sgn * muzOff, y: from.h, z: from.z,
+                        tx: ax, ty: ay, tz: az, T, age: 0, delay: CONFIG.blastReact, target, decisive: primary, kind, col });
                     primary = false;
+                }
+            };
+
+            // formation fires on transits — but only once each is at least 10% onto the screen
+            for (const tr of FX.transits){
+                if (tr.fireCool) tr.fireCool = Math.max(0, tr.fireCool - dt);
+                if (tr.dead || tr.z < 4) continue;
+                const invT = 1 / (Math.max(0.5, tr.z) * 0.6), uvxT = 0.5 + cam.headSend + tr.x * invT / aspB;
+                if (uvxT < 0.1 || uvxT > 0.9) continue;             // not yet 10% in (or already exiting)
+                const { best, seen } = acquire(tr.x, tr.z, tr.h);
+                if (tr.engaged === undefined && seen) tr.engaged = Math.random() < CONFIG.blastChance;
+                if (!tr.engaged || !best || tr.fireCool > 0) continue;
+                tr.fireCool = CONFIG.blastCooldown;
+                if (Math.random() >= CONFIG.blastFireProb) continue;
+                const Sxy = CONFIG.shipScale * best.sh.scaleMul;
+                fireVolley({ x: best.sx, h: best.shh, z: best.sz + Sxy * 1.3 }, Sxy * 0.45,
+                           tr, tr.ovx, tr.ovy, tr.ovz - gs, tr, 'ally', CY);
+            }
+
+            // formation also fires on the capital ship (heavy target — takes many hits)
+            const cap = FX.capital;
+            if (cap && !cap.dead){
+                const { best } = acquire(cap.x, cap.z, cap.h);
+                if (best && cap.fireCool <= 0){
+                    cap.fireCool = CONFIG.blastCooldown;
+                    if (Math.random() < CONFIG.blastFireProb){
+                        const Sxy = CONFIG.shipScale * best.sh.scaleMul;
+                        fireVolley({ x: best.sx, h: best.shh, z: best.sz + Sxy * 1.3 }, Sxy * 0.45,
+                                   cap, cap.ovx, cap.ovy, cap.ovz, cap, 'ally', CY);
+                    }
+                }
+                // capital RETURNS FIRE at a random holding fighter (can destroy it)
+                const live = sq.ships.filter(holding);
+                if (live.length && cap.backCool <= 0){
+                    cap.backCool = CONFIG.capFireGap;
+                    if (Math.random() < CONFIG.capFireProb){
+                        const ship = live[Math.random() * live.length | 0], sp = slotPos(ship);
+                        const capSxy = CONFIG.shipScale * cap.scaleMul;
+                        fireVolley({ x: cap.x, h: cap.h, z: cap.z - capSxy * 0.5 }, capSxy * 0.35,
+                                   sp, 0, 0, 0, ship, 'enemy', CAPC);
+                    }
                 }
             }
         }
-        // advance tracers; accuracy is rolled AT IMPACT — a hit detonates, a miss just fizzles and the ship re-fires
+        // advance tracers; accuracy rolled AT IMPACT. ally bolts hurt transits/capital, enemy bolts kill fighters
         for (let i = FX.bolts.length - 1; i >= 0; i--){
             const b = FX.bolts[i];
             if (b.delay > 0){ b.delay -= dt; continue; }            // brief lock-on beat before launch
@@ -948,23 +974,25 @@
             const u = b.T > 1e-3 ? b.age / b.T : 1;
             b.x = b.x0 + (b.tx - b.x0) * u; b.y = b.y0 + (b.ty - b.y0) * u; b.z = b.z0 + (b.tz - b.z0) * u;
             if (u >= 1){
-                if (b.decisive && b.target && !b.target.dead && Math.random() < CONFIG.boltAccuracy){
-                    const tg = b.target; tg.dead = true;
-                    const debris = [];                              // omnidirectional shrapnel for the blast
-                    const nd = 22 + (Math.random() * 12 | 0);
-                    for (let k = 0; k < nd; k++){
-                        const th = Math.random() * 6.2832, cphi = 2 * Math.random() - 1, sphi = Math.sqrt(1 - cphi * cphi);
-                        debris.push({ dx: sphi * Math.cos(th), dy: cphi, dz: sphi * Math.sin(th), sp: rand(1.4, 4.6) });
-                    }
-                    FX.blasts.push({ x: tg.x, y: tg.h, z: tg.z, model: tg.model, yaw: tg.yaw, pitch: tg.pitch,
-                        roll: tg.roll, scaleMul: tg.scaleMul, age: 0, dur: 1.1, debris });
-                    const ne = 10 + (Math.random() * 8 | 0);        // longer-lived embers that fall to the grid
-                    for (let k = 0; k < ne; k++){
-                        const th = Math.random() * 6.2832, cphi = rand(-0.1, 0.8), sphi = Math.sqrt(Math.max(0, 1 - cphi * cphi));
-                        const sp = rand(1.2, 3.4), lifeT = rand(1.4, 2.6);
-                        FX.embers.push({ x: tg.x, y: tg.h, z: tg.z,
-                            vx: sphi * Math.cos(th) * sp, vy: cphi * sp * 0.7 + rand(0.3, 0.9), vz: sphi * Math.sin(th) * sp,
-                            life: lifeT, max: lifeT });
+                const tg = b.target;
+                if (b.decisive && tg && !tg.dead){
+                    if (b.kind === 'enemy'){                         // capital -> fighter
+                        if (Math.random() < CONFIG.capAccuracy){
+                            tg.dead = true;
+                            detonate(b.tx, b.ty, b.tz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
+                        }
+                    } else if (tg.cap){                             // formation -> capital (chip away at HP)
+                        if (Math.random() < CONFIG.boltAccuracy){
+                            sparkBurst(b.x, b.y, b.z, 6);
+                            if (--tg.hp <= 0){
+                                tg.dead = true;
+                                detonate(tg.x, tg.h, tg.z, CAPITAL_MODEL, tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 4, CAPC);
+                                FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]);
+                            }
+                        }
+                    } else if (Math.random() < CONFIG.boltAccuracy){ // formation -> transit
+                        tg.dead = true;
+                        detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
                     }
                 }
                 FX.bolts.splice(i, 1);
@@ -993,12 +1021,6 @@
         for (const nb of FX.nebula)    nb.x = wrap(nb.x + nb.drift * dt);
         for (const st of FX.nearStars) st.x = wrap(st.x + st.drift * dt);
 
-        // aurora curtains fade in/out as a mood; gentle shimmer scroll
-        if (FX.aurora) FX.aurora.scroll += dt;
-        FX.nextAurora -= dt;
-        if (FX.nextAurora <= 0){ FX.auroraTarget = Math.random() < CONFIG.auroraPresent ? 1 : 0; FX.nextAurora = rand(30, 70); }
-        FX.auroraAmt += (FX.auroraTarget - FX.auroraAmt) * (1 - Math.pow(0.5, dt / 4.0));
-
         // distant lightning: an occasional quick jagged strike + sky flicker
         FX.nextLightning -= dt;
         if (FX.nextLightning <= 0){
@@ -1010,11 +1032,13 @@
         }
         if (FX.lightning){ FX.lightning.age += dt; if (FX.lightning.age >= FX.lightning.dur) FX.lightning = null; }
 
-        // capital-ship flyby (single instance; far, slow)
+        // capital-ship flyby (single instance; far, slow, can be destroyed)
         if (!FX.capital){ FX.nextCapital -= dt; if (FX.nextCapital <= 0) FX.capital = makeCapital(); }
-        else {
+        else if (!FX.capital.dead){
             const c = FX.capital;
-            c.x += c.ovx * dt; c.z += c.ovz * dt; c.lights += dt;
+            c.x += c.ovx * dt; c.z += c.ovz * dt; c.h += c.ovy * dt; c.lights += dt;
+            if (c.fireCool > 0) c.fireCool -= dt;
+            if (c.backCool > 0) c.backCool -= dt;
             const inv = 1 / (Math.max(0.5, c.z) * 0.6), uvx = 0.5 + cam.headSend + c.x * inv / (sw / sh);
             if (uvx < -0.9 || uvx > 1.9){ FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]); }
         }
@@ -1033,14 +1057,45 @@
     }
 
     function makeCapital(){
+        // same randomized-trajectory recipe as the transit ships (heading deviation + slight climb)
         const dir = Math.random() < 0.5 ? 1 : -1, z = rand(16, 28);
         const span = z * 0.6 * (sw / sh) * 1.2;
-        const sp = rand(0.5, 1.1), dev = rand(-0.22, 0.22);
+        const sp = rand(0.5, 1.1), dev = rand(-0.3, 0.3);
         const ang = (dir > 0 ? Math.PI / 2 : -Math.PI / 2) - dir * dev;
         const ovx = Math.sin(ang) * sp, ovz = Math.cos(ang) * sp * 0.3;
-        return { x: dir > 0 ? -span : span, z, h: rand(0.15, 0.55), ovx, ovz,
+        const theta = rand(-8, 12) * Math.PI / 180;                   // gentle climb/descent
+        const ovy = (Math.abs(ovx) / (sw / sh)) * Math.tan(theta);
+        const vmag = Math.hypot(ovx, ovy, ovz) || 1;
+        return { x: dir > 0 ? -span : span, z, h: rand(0.15, 0.55), dir, ovx, ovz, ovy, cap: true,
             yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
-            roll: -dir * rand(0.05, 0.16), scaleMul: rand(5.0, 8.0), lights: 0 };
+            pitch: -Math.asin(ovy / vmag), roll: -dir * rand(0.05, 0.16),
+            scaleMul: rand(5.0, 8.0), lights: 0,
+            hp: Math.round(rand(CONFIG.capHP[0], CONFIG.capHP[1])), dead: false, fireCool: 0, backCool: 1.0 };
+    }
+
+    // spawn a detonation: hull shards + shrapnel + falling embers, scaled by `mag` (1 = fighter, big = capital)
+    function detonate(x, y, z, M, yaw, pitch, roll, scaleMul, mag, col){
+        const sq = Math.sqrt(mag), debris = [], nd = Math.round((22 + (Math.random() * 12 | 0)) * mag);
+        for (let k = 0; k < nd; k++){
+            const th = Math.random() * 6.2832, cphi = 2 * Math.random() - 1, sphi = Math.sqrt(1 - cphi * cphi);
+            debris.push({ dx: sphi * Math.cos(th), dy: cphi, dz: sphi * Math.sin(th), sp: rand(1.4, 4.6) * sq });
+        }
+        FX.blasts.push({ x, y, z, model: M, yaw, pitch, roll, scaleMul, age: 0, dur: 1.1 * sq, debris, col, mag });
+        const ne = Math.round((10 + (Math.random() * 8 | 0)) * mag);
+        for (let k = 0; k < ne; k++){
+            const th = Math.random() * 6.2832, cphi = rand(-0.1, 0.8), sphi = Math.sqrt(Math.max(0, 1 - cphi * cphi));
+            const spd = rand(1.2, 3.4) * sq, lifeT = rand(1.4, 2.6) * Math.min(2, sq);
+            FX.embers.push({ x, y, z, vx: sphi*Math.cos(th)*spd, vy: cphi*spd*0.7 + rand(0.3,0.9)*sq, vz: sphi*Math.sin(th)*spd, life: lifeT, max: lifeT });
+        }
+    }
+
+    // small non-fatal hit sparks (e.g. shells chipping the capital's hull)
+    function sparkBurst(x, y, z, n){
+        for (let k = 0; k < n; k++){
+            const th = Math.random() * 6.2832, cphi = 2 * Math.random() - 1, sphi = Math.sqrt(1 - cphi * cphi);
+            const spd = rand(1.0, 2.8), lifeT = rand(0.5, 1.1);
+            FX.embers.push({ x, y, z, vx: sphi*Math.cos(th)*spd, vy: cphi*spd*0.5 + rand(0.2,0.6), vz: sphi*Math.sin(th)*spd, life: lifeT, max: lifeT });
+        }
     }
 
     // project a world point (lateral xw, forward z, height above grid) to clip space,
@@ -1134,7 +1189,7 @@
             fxPtData[pi++] = cx(nx); fxPtData[pi++] = cy(ny); fxPtData[pi++] = size;
             fxPtData[pi++] = r; fxPtData[pi++] = g; fxPtData[pi++] = b;
         };
-        const HOT = CONFIG.col.hot, CYAN = CONFIG.col.cyan, MAG = CONFIG.col.magenta, PUR = CONFIG.col.purple;
+        const HOT = CONFIG.col.hot, CYAN = CONFIG.col.cyan, MAG = CONFIG.col.magenta;
         const wrap1 = v => ((v % 1) + 1) % 1;
 
         // --- background depth: soft parallax nebula clouds + a drifting near-star layer ---
@@ -1162,24 +1217,6 @@
                 x0 = ((x0 % 1) + 1) % 1; x1 = ((x1 % 1) + 1) % 1;
                 if (Math.abs(x1 - x0) > 0.5) continue;       // skip wrap seam
                 pushLineN(x0, R.pts[i] - cam.pitchSend, x1, R.pts[i + 1] - cam.pitchSend, b, c);
-            }
-        }
-
-        // --- aurora curtains (sky weather; vertical shimmering bands, cyan low -> purple high) ---
-        if (FX.aurora && FX.auroraAmt > 0.01){
-            const A = FX.aurora, amt = FX.auroraAmt;
-            for (const bd of A.bands){
-                const px = wrap1(bd.x + cam.headSend * 0.06);
-                const wav = 0.5 + 0.5 * Math.sin(A.scroll * bd.rate + bd.ph);
-                const bb = amt * bd.amp * (0.16 + 0.5 * wav);
-                const top = bd.top + 0.03 * Math.sin(A.scroll * 0.7 + bd.ph * 1.3);
-                const SEG = 6;
-                for (let s = 0; s < SEG; s++){
-                    const t0 = s / SEG, t1 = (s + 1) / SEG;
-                    const y0 = bd.bot + (top - bd.bot) * t0, y1 = bd.bot + (top - bd.bot) * t1;
-                    const col = [CYAN[0] + (PUR[0]-CYAN[0])*t0, CYAN[1] + (PUR[1]-CYAN[1])*t0, CYAN[2] + (PUR[2]-CYAN[2])*t0];
-                    pushLineN(px, y0 - cam.pitchSend, px, y1 - cam.pitchSend, bb * (1 - t0), col);
-                }
             }
         }
 
@@ -1328,7 +1365,7 @@
         if (FX.squad){
             const sq = FX.squad, t = sq.t;
             for (const sh of sq.ships){
-                if (t < sh.arriveAt) continue;                                   // not on stage yet
+                if (t < sh.arriveAt || sh.dead) continue;                        // not on stage yet, or shot down
                 const s = sh.slot;
                 const slotXw = sq.xw0 + s.dxw, slotZ = sq.baseZ + s.dz, slotH = CONFIG.shipHeight + s.dh;
                 let xw, z, h, roll = 0, yaw = 0, pitch = 0, fade, travel = null;
@@ -1377,23 +1414,24 @@
             drawShip(tr.x, tr.z, tr.h, tr.roll, tr.yaw, tr.pitch, tr.scaleMul, CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model], tr.plume);
         }
 
-        // blaster tracers (bright hot-core streaks, true-3D so they foreshorten toward the horizon)
+        // blaster tracers (bright streaks; ally = hot-core, enemy = ominous red, true-3D foreshortening)
         for (const b of FX.bolts){
             if (b.delay > 0) continue;                          // still in the lock-on beat
             if (b.z < 0.5) continue;
+            const bc = b.col || HOT;
             const C = projectWorld(b.x, b.z, b.y, aspect);
             const dx = b.tx - b.x0, dy = b.ty - b.y0, dz = b.tz - b.z0, dl = Math.hypot(dx, dy, dz) || 1;
             const tl = 0.7;                                     // world-space tail length behind the head
             const Tt = projectWorld(b.x - dx / dl * tl, b.z - dz / dl * tl, b.y - dy / dl * tl, aspect);
-            pushLineClip(Tt.x, Tt.y, C.x, C.y, 1.1, HOT);
+            pushLineClip(Tt.x, Tt.y, C.x, C.y, 1.1, bc);
             pushPt((C.x + 1) * 0.5, (1 - C.y) * 0.5, Math.min(15, C.inv * 34) * dprNow,
-                   HOT[0] * 1.5, HOT[1] * 1.5, HOT[2] * 1.5);
+                   bc[0] * 1.5, bc[1] * 1.5, bc[2] * 1.5);
         }
 
         // detonations: hull blown apart + omnidirectional shrapnel + white flash + double shockwave
         for (const bl of FX.blasts){
             const p = bl.age / bl.dur, fade = 1 - p, fade2 = fade * fade;
-            const M = SHIP_MODELS[bl.model];
+            const M = bl.model, mag = bl.mag || 1, sqm = Math.sqrt(mag), RC = bl.col || CYAN;
             const Sxy = CONFIG.shipScale * bl.scaleMul, Sz = Sxy * 0.6;
             const cr = Math.cos(bl.roll), sr = Math.sin(bl.roll);
             const cp = Math.cos(bl.pitch), sp = Math.sin(bl.pitch);
@@ -1412,59 +1450,75 @@
                 return projectWorld(bl.x + r[0]*k*Sxy, bl.z + r[2]*k*Sz, bl.y + r[1]*k*Sxy, aspect);
             });
             const sb = 1.15 * fade;
-            for (const [a, b2] of M.E) pushLineClip(P[a].x, P[a].y, P[b2].x, P[b2].y, sb, CYAN);
-            // omnidirectional shrapnel (hot core cooling to magenta as it scatters)
+            for (const [a, b2] of M.E) pushLineClip(P[a].x, P[a].y, P[b2].x, P[b2].y, sb, RC);
+            // omnidirectional shrapnel (hot core cooling toward the blast colour as it scatters)
             for (const d of bl.debris){
                 const dist = bl.age * d.sp;
                 const Pd = projectWorld(bl.x + d.dx * dist, bl.z + d.dz * dist, bl.y + d.dy * dist, aspect);
                 if (Pd.inv <= 0) continue;
-                const sz = Math.min(13, Pd.inv * 46) * fade * dprNow;
+                const sz = Math.min(13, Pd.inv * 46) * fade * dprNow * sqm;
                 const mx = Math.min(1, p * 1.6), br = 1.5 * fade2;
                 pushPt((Pd.x + 1) * 0.5, (1 - Pd.y) * 0.5, sz,
-                       (HOT[0] + (MAG[0]-HOT[0])*mx) * br, (HOT[1] + (MAG[1]-HOT[1])*mx) * br,
-                       (HOT[2] + (MAG[2]-HOT[2])*mx) * br);
+                       (HOT[0] + (RC[0]-HOT[0])*mx) * br, (HOT[1] + (RC[1]-HOT[1])*mx) * br,
+                       (HOT[2] + (RC[2]-HOT[2])*mx) * br);
             }
-            // bright central flash + lingering core glow
+            // bright central flash + lingering core glow (bigger for higher-mag blasts)
             const fl = Math.max(0, 1 - p / 0.30);
             if (fl > 0)
-                pushPt((ctr.x + 1) * 0.5, (1 - ctr.y) * 0.5, (26 + 120 * fl) * dprNow,
+                pushPt((ctr.x + 1) * 0.5, (1 - ctr.y) * 0.5, (26 + 120 * fl) * sqm * dprNow,
                        HOT[0] * 2.2 * fl, HOT[1] * 2.2 * fl, HOT[2] * 2.2 * fl);
-            pushPt((ctr.x + 1) * 0.5, (1 - ctr.y) * 0.5, (14 + 30 * fade) * dprNow,
-                   HOT[0] * 1.1 * fade2, HOT[1] * 0.6 * fade2, MAG[2] * 0.9 * fade2);
-            // double expanding shockwave ring (in the target plane)
+            pushPt((ctr.x + 1) * 0.5, (1 - ctr.y) * 0.5, (14 + 30 * fade) * sqm * dprNow,
+                   HOT[0] * 1.1 * fade2, RC[1] * 0.6 * fade2, RC[2] * 0.9 * fade2);
+            // double expanding shockwave ring (in the target plane), scaled by blast size
             for (let ri = 0; ri < 2; ri++){
-                const ringN = 24, rr = bl.age * (ri ? 2.3 : 3.8), rb = fade * (ri ? 0.7 : 1.0);
+                const ringN = 24, rr = bl.age * (ri ? 2.3 : 3.8) * sqm, rb = fade * (ri ? 0.7 : 1.0);
                 for (let k = 0; k < ringN; k++){
                     const a = k / ringN * 6.2832;
                     const Pr = projectWorld(bl.x + Math.cos(a) * rr, bl.z, bl.y + Math.sin(a) * rr, aspect);
                     pushPt((Pr.x + 1) * 0.5, (1 - Pr.y) * 0.5, 7 * rb * dprNow,
-                           CYAN[0] * rb, CYAN[1] * rb, CYAN[2] * rb);
+                           RC[0] * rb, RC[1] * rb, RC[2] * rb);
                 }
             }
         }
 
-        // --- capital-ship flyby (huge translucent dreadnought near the horizon) ---
-        if (FX.capital){
-            const c = FX.capital, M = CAPITAL_MODEL;
+        // --- capital-ship flyby (huge translucent ominous dreadnought near the horizon) ---
+        if (FX.capital && !FX.capital.dead){
+            const c = FX.capital, M = CAPITAL_MODEL, OM = CONFIG.col.cap;
             const Sxy = CONFIG.shipScale * c.scaleMul, Sz = Sxy * 0.6;
-            const cr = Math.cos(c.roll), sr = Math.sin(c.roll), cyw = Math.cos(c.yaw), syw = Math.sin(c.yaw);
-            const rot = v => { let x = v[0]*cr - v[1]*sr, y = v[0]*sr + v[1]*cr, zz = v[2];   // roll(z) then yaw(y)
-                const x2 = x*cyw + zz*syw; zz = -x*syw + zz*cyw; x = x2; return [x, y, zz]; };
+            const cr = Math.cos(c.roll), sr = Math.sin(c.roll);
+            const cp = Math.cos(c.pitch || 0), spp = Math.sin(c.pitch || 0);
+            const cyw = Math.cos(c.yaw), syw = Math.sin(c.yaw);
+            const rot = v => {                                                          // roll(z)->pitch(x)->yaw(y)
+                let x = v[0]*cr - v[1]*sr, y = v[0]*sr + v[1]*cr, zz = v[2];
+                const y2 = y*cp - zz*spp; zz = y*spp + zz*cp; y = y2;
+                const x2 = x*cyw + zz*syw; zz = -x*syw + zz*cyw; x = x2; return [x, y, zz];
+            };
             const proj = v => { const r = rot(v); return projectWorld(c.x + r[0]*Sxy, c.z + r[2]*Sz, c.h + r[1]*Sxy, aspect); };
             const cc = projectWorld(c.x, c.z, c.h, aspect), ux = (cc.x + 1) * 0.5;
             const fade = Math.min(1, Math.max(0, Math.min(ux + 0.35, 1.35 - ux) / 0.3));   // ease on/off at the sides
             if (fade > 0.01){
                 const P = M.V.map(proj);
                 const fillB = CONFIG.shipFill * 0.85 * fade;
-                for (const [a, b2, c2] of M.F) pushTriClip(P[a].x, P[a].y, P[b2].x, P[b2].y, P[c2].x, P[c2].y, fillB, CYAN);
-                for (const [a, b2] of M.E) pushLineClip(P[a].x, P[a].y, P[b2].x, P[b2].y, 0.7 * fade, CYAN);
+                for (const [a, b2, c2] of M.F) pushTriClip(P[a].x, P[a].y, P[b2].x, P[b2].y, P[c2].x, P[c2].y, fillB, OM);
+                for (const [a, b2] of M.E) pushLineClip(P[a].x, P[a].y, P[b2].x, P[b2].y, 0.7 * fade, OM);
                 for (let k = 0; k < M.LIGHTS.length; k++){                                  // blinking running lights
-                    const pp = P[M.LIGHTS[k]], bl = 0.5 + 0.5 * Math.sin(c.lights * 3 + k * 1.7), col = (k % 2) ? MAG : CYAN;
+                    const pp = P[M.LIGHTS[k]], bl = 0.5 + 0.5 * Math.sin(c.lights * 3 + k * 1.7), col = (k % 2) ? OM : CONFIG.col.orange;
                     pushPt((pp.x + 1) * 0.5, (1 - pp.y) * 0.5, (3 + 3 * bl) * dprNow, col[0]*bl*fade, col[1]*bl*fade, col[2]*bl*fade);
                 }
-                for (const e of M.ENG){ const pe = proj(e);                                // steady engine glow
-                    pushPt((pe.x + 1) * 0.5, (1 - pe.y) * 0.5, Math.min(20, pe.inv * Sxy * 110) * dprNow,
-                           HOT[0]*fade, HOT[1]*0.5*fade, MAG[2]*0.8*fade); }
+                // big, long exhaust jets — true-3D plume extending back along the world heading
+                const fwd = rot([0, 0, 1]), TR = 18, segL = 0.16, segZ = 0.20;
+                for (const e of M.ENG){
+                    const pe = proj(e);                                                    // bright engine core
+                    pushPt((pe.x + 1) * 0.5, (1 - pe.y) * 0.5, Math.min(26, pe.inv * Sxy * 150) * dprNow,
+                           HOT[0]*1.2*fade, HOT[1]*0.55*fade, OM[2]*0.6*fade);
+                    const er = rot(e), ex = c.x + er[0]*Sxy, ez = c.z + er[2]*Sz, eh = c.h + er[1]*Sxy;
+                    for (let kk = 1; kk <= TR; kk++){
+                        const T = projectWorld(ex - fwd[0]*segL*kk, ez - fwd[2]*segZ*kk, eh - fwd[1]*segL*kk, aspect);
+                        const f = 1 - kk / (TR + 1), tb = f * f * 1.5 * fade, mix = kk / TR;
+                        pushPt((T.x + 1) * 0.5, (1 - T.y) * 0.5, Math.min(26, T.inv * Sxy * 130) * f * dprNow,
+                               (HOT[0]+(OM[0]-HOT[0])*mix)*tb, (HOT[1]+(OM[1]-HOT[1])*mix)*tb, (HOT[2]+(OM[2]-HOT[2])*mix)*tb);
+                    }
+                }
             }
         }
 
