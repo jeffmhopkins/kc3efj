@@ -83,12 +83,12 @@
         chroma:        0.0016,
         vignette:      0.32,
 
-        // ── wandering camera (slow heading drift; pans grid + sun together) ──
-        camYaw:        0.06,         // max autonomous heading, screen-x fraction
-        camPitch:      0.012,        // max autonomous pitch (vertical), tightly bounded
-        camOmega:      0.55,         // spring stiffness -> ~7s ease into each new aim
-        camReaim:      [12, 28],     // seconds between course decisions
-        camYawClamp:   0.12,         // hard clamp (yaw + mouse) to keep sun on-screen
+        // ── wandering camera (banks like a plane between headings; pans grid + sun) ──
+        camYaw:        0.20,         // max autonomous heading, screen-x fraction
+        camPitch:      0.018,        // max autonomous pitch (vertical), tightly bounded
+        camOmega:      0.70,         // spring stiffness -> ~5.7s decisive turn into each aim
+        camReaim:      [5, 12],      // seconds between course decisions (turns often)
+        camYawClamp:   0.28,         // hard clamp (yaw + mouse) keeps sun on-screen
         camPitchClamp: 0.022,        // hard clamp protects the z = 0.20/depth grid math
         mouseGainX:    0.10,         // mouse steering authority (added on top of autopilot)
         mouseGainY:    0.010,
@@ -178,13 +178,20 @@
             vec3 skyTop     = vec3(0.039, 0.004, 0.094);
             col = mix(skyHorizon, skyMid, smoothstep(0.0, 0.45, t));
             col = mix(col, skyTop, smoothstep(0.35, 1.0, t));
-            // ---- stars (upper sky only; parallax slightly with the heading) ----
+            // ---- stars: round points at random sub-cell positions, irregular twinkle ----
             vec2 starUv = uv + vec2(uHeading * 0.15, uPitch * 0.15);
-            vec2 sp = floor(starUv * vec2(aspect, 1.0) * 140.0);
-            float h = hash(sp);
-            float star = step(0.988, h) * smoothstep(0.12, 0.6, t);
-            float tw = 0.5 + 0.5 * sin(uTime * 2.5 + h * 40.0);
-            col += vec3(0.8, 0.9, 1.0) * star * tw;
+            vec2 gv = starUv * vec2(aspect, 1.0) * 90.0;
+            vec2 id = floor(gv);
+            vec2 fp = fract(gv);
+            float h = hash(id);
+            if (h > 0.93) {                                       // ~7% of cells hold a star
+                vec2 sPos = vec2(hash(id + 11.3), hash(id + 41.7));
+                float core = smoothstep(0.10, 0.0, length(fp - sPos));   // soft round dot
+                float rate = 0.6 + 2.4 * hash(id + 7.1);          // per-star twinkle speed
+                float tw   = 0.45 + 0.55 * sin(uTime * rate + h * 60.0);
+                float mag  = 0.5 + 0.5 * hash(id + 3.3);          // per-star brightness
+                col += vec3(0.8, 0.9, 1.0) * core * tw * mag * smoothstep(0.12, 0.6, t);
+            }
         }
 
         // ---- retro sun (overlaid across whole frame so it bleeds over grid) ----
@@ -639,8 +646,10 @@
         if (reduced){ cam.headSend = 0; cam.pitchSend = 0; return; }
         if (mouseDirty){ lastMoveT = t; mouseDirty = false; }
         cam.reaim -= dt;
-        if (cam.reaim <= 0){                                   // pick a new course
-            cam.hT = rand(-CONFIG.camYaw, CONFIG.camYaw);
+        if (cam.reaim <= 0){                                   // bank into a new course
+            // bias the new heading to the opposite side so the turn is decisive (plane-like)
+            const sign = cam.h > 0 ? -1 : (cam.h < 0 ? 1 : (Math.random() < 0.5 ? 1 : -1));
+            cam.hT = sign * rand(CONFIG.camYaw * 0.5, CONFIG.camYaw);
             cam.pT = rand(-CONFIG.camPitch, CONFIG.camPitch);
             cam.reaim = rand(CONFIG.camReaim[0], CONFIG.camReaim[1]);
         }
