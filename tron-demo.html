@@ -94,6 +94,13 @@
         glyphGap:      [90, 150],    // drifting glyph cluster (s)
         ridgePresent:  0.5,          // fraction of time the distant ridge is faded in
 
+        // ── Star Fox wingmate squadron (flies in from behind, holds formation, peels off) ──
+        shipGap:       [60, 90],     // seconds between squadron flybys
+        shipScale:     0.28,         // ship size (world half-extent)
+        shipHeight:    0.30,         // formation cruise altitude above the grid
+        shipMaxRoll:   1.15,         // peel-off bank angle (radians, ~66deg)
+        peelSpread:    2.6,          // lateral world divergence at full peel-off
+
         // palette ("Miami Vice Midnight")
         col: {
             cyan:    [0.18, 0.89, 0.90],
@@ -577,6 +584,8 @@
     const ptData   = new Float32Array(PT_FLOATS);
 
     function easeOut(t){ return 1 - Math.pow(1 - t, 3); }
+    function easeIn(t){ return t * t; }
+    const lerp = (a, b, t) => a + (b - a) * t;
 
     function buildGeometry(){
         const C = CONFIG.col;
@@ -635,9 +644,20 @@
     const OCTA_V = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
     const OCTA_E = [[0,2],[0,3],[0,4],[0,5],[1,2],[1,3],[1,4],[1,5],[2,4],[2,5],[3,4],[3,5]];
 
+    // wingmate "Arwing": nose +z (travel/horizon), swept wings ±x, tall tail fin +y
+    const SHIP_V = [
+        [ 0.00,  0.00,  1.40], [ 0.00,  0.18, -0.20], [ 0.00, -0.10, -0.90],
+        [ 0.55, -0.05, -0.55], [-0.55, -0.05, -0.55], [ 0.16, -0.02,  0.30],
+        [-0.16, -0.02,  0.30], [ 0.16, -0.02, -0.70], [-0.16, -0.02, -0.70],
+        [ 0.00,  0.42, -0.78], [ 0.22, -0.05, -0.55], [-0.22, -0.05, -0.55],
+    ];
+    const SHIP_E = [[0,1],[1,2],[0,5],[0,6],[5,7],[6,8],[5,3],[3,7],[6,4],[4,8],[2,9],[9,7],[9,8],[3,10],[4,11]];
+    const SHIP_ENGINES = [[0.10,-0.05,-0.90],[-0.10,-0.05,-0.90]];
+
     const FX = { stars: [], comets: [], polys: [], cycles: [], glyphs: [], ridge: null,
+                 squad: null,
                  ridgeAmt: 0, ridgeTarget: 0,
-                 nextStar: 0, nextComet: 0, nextPoly: 0, nextCycle: 0, nextGlyph: 0, nextRidge: 0 };
+                 nextStar: 0, nextComet: 0, nextPoly: 0, nextCycle: 0, nextGlyph: 0, nextShip: 0, nextRidge: 0 };
 
     function buildRidge(){
         // y-down normalized; horizon is at ~0.60, ridge sits just above it (smaller y)
@@ -658,6 +678,8 @@
         FX.nextPoly  = rand(CONFIG.polyGap[0],  CONFIG.polyGap[1]);
         FX.nextCycle = rand(CONFIG.cycleGap[0], CONFIG.cycleGap[1]);
         FX.nextGlyph = rand(CONFIG.glyphGap[0], CONFIG.glyphGap[1]);
+        FX.squad = null;
+        FX.nextShip = rand(CONFIG.shipGap[0], CONFIG.shipGap[1]);
         FX.ridgeAmt = 0; FX.ridgeTarget = Math.random() < CONFIG.ridgePresent ? 1 : 0;
         FX.nextRidge = rand(25, 60);
         buildRidge();
@@ -678,7 +700,7 @@
         }
         // comet (rare, big, slow)
         FX.nextComet -= dt;
-        if (FX.nextComet <= 0 && FX.comets.length < 1){
+        if (FX.nextComet <= 0 && FX.comets.length < 1 && !FX.squad){
             const L = side();
             FX.comets.push({ x: L ? -0.12 : 1.12, y: rand(0.06, 0.26),   // high sky (y-down)
                 vx: (L ? 1 : -1) * rand(0.20, 0.32), vy: rand(0.03, 0.08), depth: 0.35 });
@@ -686,7 +708,7 @@
         }
         // tumbling wireframe polyhedron (mid)
         FX.nextPoly -= dt;
-        if (FX.nextPoly <= 0 && FX.polys.length < 1){
+        if (FX.nextPoly <= 0 && FX.polys.length < 1 && !FX.squad){
             FX.polys.push({ u: -0.15, speed: rand(0.06, 0.10), y: rand(0.20, 0.46),
                 depth: rand(0.45, 0.8), dir: side() ? 1 : -1,
                 rx: rand(0, 6.28), ry: rand(0, 6.28), wx: rand(0.2, 0.5), wy: rand(0.3, 0.6),
@@ -695,19 +717,30 @@
         }
         // light-cycle grid streak (floor)
         FX.nextCycle -= dt;
-        if (FX.nextCycle <= 0 && FX.cycles.length < 1){
+        if (FX.nextCycle <= 0 && FX.cycles.length < 1 && !FX.squad){
             FX.cycles.push({ u: 0, speed: rand(0.18, 0.30), z: rand(2.5, 6.0), dir: side() ? 1 : -1,
                 col: Math.random() < 0.5 ? CONFIG.col.cyan : CONFIG.col.purple });
             FX.nextCycle = rand(CONFIG.cycleGap[0], CONFIG.cycleGap[1]);
         }
         // glyph cluster (faint, mid/sky) — rarest, lowest key
         FX.nextGlyph -= dt;
-        if (FX.nextGlyph <= 0 && FX.glyphs.length < 1){
+        if (FX.nextGlyph <= 0 && FX.glyphs.length < 1 && !FX.squad){
             const L = side(), n = 4 + (Math.random() * 3 | 0), marks = [];
             for (let i = 0; i < n; i++) marks.push({ dx: rand(-0.03, 0.03), dy: rand(-0.04, 0.04), ph: rand(0, 6.28) });
             FX.glyphs.push({ x: L ? -0.06 : 1.06, y: rand(0.15, 0.48),
                 vx: (L ? 1 : -1) * rand(0.05, 0.08), marks, col: Math.random() < 0.5 ? CONFIG.col.cyan : CONFIG.col.purple });
             FX.nextGlyph = rand(CONFIG.glyphGap[0], CONFIG.glyphGap[1]);
+        }
+
+        // Star Fox wingmate squadron (single instance; suppresses lesser cameos while live)
+        FX.nextShip -= dt;
+        if (FX.nextShip <= 0 && !FX.squad){
+            FX.squad = makeSquad();
+            FX.nextShip = rand(CONFIG.shipGap[0], CONFIG.shipGap[1]);
+        }
+        if (FX.squad){
+            FX.squad.t += dt;
+            if (FX.squad.t > 8.8) FX.squad = null;       // total flyby duration
         }
 
         // advance / retire
@@ -724,6 +757,45 @@
         FX.nextRidge -= dt;
         if (FX.nextRidge <= 0){ FX.ridgeTarget = Math.random() < CONFIG.ridgePresent ? 1 : 0; FX.nextRidge = rand(40, 90); }
         FX.ridgeAmt += (FX.ridgeTarget - FX.ridgeAmt) * (1 - Math.pow(0.5, dt / 3.0));
+    }
+
+    // project a world point (lateral xw, forward z, height above grid) to clip space,
+    // sharing the grid's perspective, fixed heading, and horizon (used by the squadron)
+    function projectWorld(xw, z, hgt, aspect){
+        const zc = Math.max(0.5, z);
+        const inv = 1.0 / (zc * 0.6);
+        const uvx = 0.5 + cam.headSend + xw * inv / aspect;
+        const uvy = (CONFIG.horizon + cam.pitchSend) - 0.20 / zc + hgt * inv;   // y-up
+        return { x: cx(uvx), y: cy(1 - uvy), inv };
+    }
+
+    // squadron: lead anchor trajectory (APPROACH -> CRUISE -> PEEL/EXIT)
+    function makeSquad(){
+        const dir = Math.random() < 0.5 ? 1 : -1;
+        const slots = [
+            { dxw: 0.0, dz: 0.0,  dh: 0.0,  ps: dir, pd: 0.0,  climb: 1 }, // lead
+            { dxw:-0.5, dz:-0.45, dh:-0.03, ps: -1,  pd: 0.35, climb: 0 },
+            { dxw: 0.5, dz:-0.45, dh:-0.03, ps:  1,  pd: 0.70, climb: 0 },
+            { dxw:-1.0, dz:-0.90, dh:-0.05, ps: -1,  pd: 1.05, climb: 0 },
+            { dxw: 1.0, dz:-0.90, dh:-0.05, ps:  1,  pd: 1.40, climb: 0 },
+        ];
+        const ships = slots.map((s, i) => ({
+            slot: s, lead: i === 0,
+            col: i === 0 ? CONFIG.col.hot : CONFIG.col.cyan,
+            scaleMul: i === 0 ? 1.25 : 1.0,
+        }));
+        return { t: 0, dir, xw0: rand(-0.35, 0.35), ships };
+    }
+    function squadAnchor(sq){
+        const t = sq.t, PA = 1.6, PC = 4.0;
+        let zL, hL, xwL = sq.xw0;
+        if (t < PA){ const p = t / PA;
+            zL = lerp(0.85, 1.9, easeOut(p)); hL = lerp(0.04, CONFIG.shipHeight, p); }
+        else if (t < PA + PC){ const p = (t - PA) / PC;
+            zL = lerp(1.9, 2.35, p); hL = CONFIG.shipHeight; xwL += 0.12 * Math.sin(p * 6.283 * 0.6); }
+        else { const p = Math.min(1, (t - PA - PC) / 3.2);
+            zL = lerp(2.35, 4.2, easeIn(p)); hL = CONFIG.shipHeight + 0.10 * p; }
+        return { zL, hL, xwL };
     }
 
     // invert the grid's perspective so floor cameos sit on the moving grid plane
@@ -830,6 +902,47 @@
                 const tw = 0.25 + 0.15 * Math.sin(timeSec * 3.0 + m.ph);   // low-key flicker
                 const c = gc.col;
                 pushPt(px + m.dx, gc.y + m.dy, 2.2 * dprNow, c[0]*tw, c[1]*tw, c[2]*tw);
+            }
+        }
+
+        // --- Star Fox wingmate squadron (banks over the grid, then peels off) ---
+        const drawShip = (xw, z, h, bank, yaw, scaleMul, col, fade, lead) => {
+            const C = projectWorld(xw, z, h, aspect);
+            const sc = Math.min(0.45, Math.max(0.03, CONFIG.shipScale * scaleMul * C.inv));
+            const cb = Math.cos(bank), sb = Math.sin(bank), cyw = Math.cos(yaw), syw = Math.sin(yaw);
+            const proj = v => {                                   // bank-roll then yaw, billboard scale
+                const rx = v[0]*cb - v[1]*sb, ry = v[0]*sb + v[1]*cb, rz = v[2];
+                const fx = rx*cyw + rz*syw, fz = -rx*syw + rz*cyw;
+                return { x: C.x + fx*sc/aspect, y: C.y + ry*sc, d: fz };
+            };
+            const P = SHIP_V.map(proj);
+            const nf = d => Math.max(0.45, Math.min(1.1, 0.85 - d*0.30));   // depth-fade edges
+            const baseB = (lead ? 1.05 : 0.8) * fade;
+            for (const [a, b] of SHIP_E)
+                pushLineClip(P[a].x, P[a].y, P[b].x, P[b].y, baseB * 0.5 * (nf(P[a].d) + nf(P[b].d)), col);
+            // twin engine glow (white-hot core; blooms toward cyan), + short afterburner trail
+            const H = CONFIG.col.hot, Cc = CONFIG.col.cyan;
+            const eb = 1.5 * fade * (0.85 + 0.15 * Math.sin(timeSec * 30 + xw * 7));
+            const esz = Math.max(3, Math.min(16, sc * 90)) * dprNow;
+            for (const e of SHIP_ENGINES){ const pe = proj(e);
+                pushPt((pe.x + 1) * 0.5, (1 - pe.y) * 0.5, esz, H[0]*eb, H[1]*eb, H[2]*eb); }
+            for (let k = 1; k <= 4; k++){
+                const T = projectWorld(xw, z - k * 0.06, h, aspect), f = 1 - k / 5, tb = f * f * 1.2 * fade;
+                pushPt((T.x + 1) * 0.5, (1 - T.y) * 0.5, esz * 0.7 * f, Cc[0]*tb, Cc[1]*tb, Cc[2]*tb);
+            }
+        };
+        if (FX.squad){
+            const sq = FX.squad, t = sq.t, A = squadAnchor(sq), PEEL = 5.6;
+            for (const sh of sq.ships){
+                const s = sh.slot;
+                const peel = easeIn(Math.min(1, Math.max(0, (t - (PEEL + s.pd)) / 1.6)));
+                const fade = 1 - Math.min(1, Math.max(0, (t - (PEEL + s.pd) - 0.9) / 0.9));
+                if (fade <= 0.001) continue;
+                const xw = A.xwL + s.dxw + sq.dir * s.ps * CONFIG.peelSpread * peel;
+                const z  = A.zL + s.dz + peel * 0.6;
+                const h  = A.hL + s.dh + s.climb * peel * 0.5 + peel * 0.15;
+                drawShip(xw, z, h, sq.dir * s.ps * CONFIG.shipMaxRoll * peel, sq.dir * s.ps * 0.6 * peel,
+                         sh.scaleMul, sh.col, fade, sh.lead);
             }
         }
 
