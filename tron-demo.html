@@ -1152,38 +1152,38 @@
                 const s = sh.slot;
                 const slotXw = sq.xw0 + s.dxw, slotZ = sq.baseZ + s.dz, slotH = CONFIG.shipHeight + s.dh;
                 let xw, z, h, roll = 0, yaw = 0, pitch = 0, fade, travel = null;
+                // nose ALWAYS points along the flight path: derive yaw/pitch from the same `travel`
+                // vector the plume uses, so the body, its motion and the jet can never disagree.
+                const aimAlong = T => {                                          // T = world velocity dir
+                    const tl = Math.hypot(T[0], T[2]) || 1e-3;
+                    yaw = Math.atan2(T[0], T[2]); pitch = -Math.atan2(T[1], tl);
+                };
                 if (t < sh.arriveAt + sh.arrDur){                                // ARRIVING (from a random direction)
                     const p = (t - sh.arriveAt) / sh.arrDur, e = easeOut(p), ie = 1 - e;
                     xw = slotXw + sh.edx * ie; z = Math.max(0.35, slotZ + sh.edz * ie); h = slotH + sh.edh * ie;
-                    // point the nose along the incoming path, easing to face forward on arrival
-                    const vdx = -sh.edx, vdz = Math.max(0.001, -sh.edz), vdh = -sh.edh;
-                    const fyaw = Math.atan2(vdx, vdz), fpitch = -Math.atan2(vdh, Math.hypot(vdx, vdz));
-                    yaw = fyaw * ie; pitch = fpitch * ie; roll = -fyaw * 0.5 * ie;
                     fade = Math.min(1, p / 0.2);
-                    // plume trails the real flight path (slot-bound velocity), easing to forward
-                    // as the ship settles — the nose leads it, so trailing the nose would be wrong
+                    // entry velocity, easing to formation-forward as it settles into the slot
                     const aMag = Math.hypot(sh.edx, sh.edh, sh.edz) || 1;
                     travel = [-sh.edx * ie, -sh.edh * ie, -sh.edz * ie + (1 - ie) * aMag];
+                    aimAlong(travel);
+                    roll = -yaw * 0.4;                                           // gentle bank into the curve
                 } else if (t < sh.departAt){                                     // HOLD formation (alive)
                     xw = slotXw; z = slotZ; h = slotH; fade = 1;
                     const w = Math.min(1, (t - (sh.arriveAt + sh.arrDur)) / 2.0); // ease wobble in (no snap)
                     roll = w * 0.14 * Math.sin(t * 0.53 + sh.phase);             // 1/3 of the prior rate
-                    pitch = w * 0.05 * Math.sin(t * 0.37 + sh.phase * 1.3);
+                    pitch = w * 0.05 * Math.sin(t * 0.37 + sh.phase * 1.3);      // nose forward (yaw 0) + soft bob
                 } else {                                                         // DEPARTING (15s peel-off)
                     const p = Math.min(1, (t - sh.departAt) / sh.depDur), peel = easeIn(p);
                     const wob = Math.max(0, 1 - p / 0.2);                        // carry hold wobble out smoothly
+                    const vUp = (sh.lead ? 0.5 : 0.0) + 0.55;                    // climb-out rate (steeper for lead)
                     xw = slotXw + sq.dir * s.ps * CONFIG.peelSpread * peel;
                     z  = slotZ + peel * 0.8;
-                    h  = slotH + (sh.lead ? 0.4 : 0.0) * peel + peel * 0.2;
-                    roll  = wob * 0.14 * Math.sin(t * 0.53 + sh.phase) + sq.dir * s.ps * CONFIG.shipMaxRoll * peel;
-                    yaw   = sq.dir * s.ps * 0.7 * peel;
-                    pitch = wob * 0.05 * Math.sin(t * 0.37 + sh.phase * 1.3) - 0.5 * peel;  // nose up on climb-out
+                    h  = slotH + vUp * peel;
                     fade  = 1 - Math.min(1, Math.max(0, (p - 0.85) / 0.15));
-                    // plume follows the climb-out path (lateral + away + up), not the up-pitched
-                    // nose — easing out of straight-forward so it tracks the arc as it peels away
-                    travel = [sq.dir * s.ps * CONFIG.peelSpread * peel,
-                              ((sh.lead ? 0.4 : 0.0) + 0.2) * peel,
-                              0.8 * peel + (1 - peel)];
+                    // peel-off velocity (lateral + away + climb), eased out of straight-forward
+                    travel = [sq.dir * s.ps * CONFIG.peelSpread * peel, vUp * peel, 0.8 * peel + (1 - peel)];
+                    aimAlong(travel);
+                    roll = wob * 0.14 * Math.sin(t * 0.53 + sh.phase) + sq.dir * s.ps * CONFIG.shipMaxRoll * peel;
                 }
                 if (fade <= 0.001) continue;
                 drawShip(xw, z, h, roll, yaw, pitch, sh.scaleMul, sh.col, fade, sh.lead, SHIP_MODELS[sh.model], 1, travel);
