@@ -951,11 +951,11 @@
             }
         }
 
-        // capital RETURNS FIRE — only while it is itself on-screen; targets fighters AND transits
+        // capital RETURNS FIRE — only while it is itself on-screen; targets any on-stage fighter AND transits
         if (cap && !cap.dead && cap.onScreen && cap.backCool <= 0){
             const pool = [];
-            if (FX.squad){ const sq = FX.squad, t = sq.t;
-                for (const sh of sq.ships) if (!sh.dead && t >= sh.arriveAt + sh.arrDur && t < sh.departAt) pool.push(sh); }
+            if (FX.squad){ const sq = FX.squad, t = sq.t;       // any squad member on stage, slotted or maneuvering
+                for (const sh of sq.ships) if (!sh.dead && sh.wx !== undefined && t >= sh.arriveAt && t < sh.departAt + sh.depDur) pool.push(sh); }
             for (const tr of FX.transits) if (!tr.dead && tr.z > 4) pool.push(tr);
             if (pool.length){
                 cap.backCool = CONFIG.capFireGap;
@@ -963,7 +963,7 @@
                     const tgt = pool[Math.random() * pool.length | 0];
                     const capSxy = CONFIG.shipScale * cap.scaleMul, from = { x: cap.x, h: cap.h, z: cap.z - capSxy * 0.5 };
                     let aim;
-                    if (tgt.slot){ const s = tgt.slot; aim = { x: FX.squad.xw0 + s.dxw, h: CONFIG.shipHeight + s.dh, z: FX.squad.baseZ + s.dz }; }
+                    if (tgt.slot) aim = { x: tgt.wx, h: tgt.wh, z: tgt.wz };   // live position (in slot or in transit)
                     else aim = leadAim(from, tgt.x, tgt.h, tgt.z, tgt.ovx, tgt.ovy, tgt.ovz - gsB);
                     fireVolley(from, capSxy * 0.35, aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy);
                 }
@@ -974,8 +974,8 @@
         if (FX.turret){
             const tu = FX.turret;
             const pool = [];                                       // everything EXCEPT the capital ship
-            if (FX.squad){ const sq = FX.squad, t = sq.t;
-                for (const sh of sq.ships) if (!sh.dead && t >= sh.arriveAt + sh.arrDur && t < sh.departAt) pool.push(sh); }
+            if (FX.squad){ const sq = FX.squad, t = sq.t;          // any squad member on stage, slotted or maneuvering
+                for (const sh of sq.ships) if (!sh.dead && sh.wx !== undefined && t >= sh.arriveAt && t < sh.departAt + sh.depDur) pool.push(sh); }
             for (const tr of FX.transits) if (!tr.dead && tr.z > 2) pool.push(tr);
             if (tu.switchCool <= 0 || !tu.target || tu.target.dead){
                 tu.target = pool.length ? pool[Math.random() * pool.length | 0] : null;
@@ -985,9 +985,9 @@
             if (tg && !tg.dead){
                 const gg = Math.min(12, tu.z) * (0.35 + 0.65 * Math.min(1, (tu.z - 0.55) / 2.0));  // match render scale
                 const apex = { x: tu.x, h: tu.h + 0.026 * gg, z: tu.z };  // barrel pivot atop the base
-                const gx = tg.slot ? (FX.squad.xw0 + tg.slot.dxw) : tg.x;
-                const gh = tg.slot ? (CONFIG.shipHeight + tg.slot.dh) : tg.h;
-                const gz = tg.slot ? (FX.squad.baseZ + tg.slot.dz) : tg.z;
+                const gx = tg.slot ? tg.wx : tg.x;                 // aim at the ship's live position
+                const gh = tg.slot ? tg.wh : tg.h;
+                const gz = tg.slot ? tg.wz : tg.z;
                 const vx = tg.slot ? 0 : tg.ovx, vy = tg.slot ? 0 : tg.ovy, vz = tg.slot ? 0 : tg.ovz - gsB;
                 tu.aim = leadAim(apex, gx, gh, gz, vx, vy, vz);     // barrel tracks the lead point
                 const tinv = 1 / (Math.max(0.5, tu.z) * 0.6), tuvx = 0.5 + cam.headSend + tu.x * tinv / aspB;
@@ -1011,7 +1011,7 @@
                     if (b.kind === 'enemy'){                         // capital/turret -> fighter or transit
                         if (Math.random() < b.acc){
                             tg.dead = true;
-                            if (tg.slot) detonate(b.tx, b.ty, b.tz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
+                            if (tg.slot) detonate(tg.wx, tg.wh, tg.wz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
                             else detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
                         }
                     } else if (tg.isTurret){                        // formation -> turret: sparks only, indestructible
