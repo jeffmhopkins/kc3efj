@@ -108,6 +108,12 @@
         capFireProb:   0.8,          // chance the capital actually fires on each beat
         capAccuracy:   0.065,        // chance a capital volley destroys the targeted fighter (normal target)
 
+        // ── ground turret (rare; rides the grid, sprays everything except the capital) ──
+        turretGap:     [180, 360],   // seconds between turret appearances (~1 per 5 min)
+        turretFireGap: 0.25,         // fires twice as fast as the formation/capital
+        turretSwitch:  2.0,          // re-pick a target every 2s
+        turretAccuracy: 0.02,        // ~4x lower than a normal-target volley
+
         // ── Star Fox wingmate squadron (flies in from behind, holds formation, peels off) ──
         shipGap:       [90, 90],     // seconds of empty sky between squadron passes
         shipScale:     0.28,         // ship size (world half-extent)
@@ -740,10 +746,10 @@
 
     const FX = { stars: [], comets: [], polys: [], cycles: [], glyphs: [], ridge: null,
                  squad: null, transits: [], bolts: [], blasts: [], embers: [], groundSparks: [],
-                 nebula: [], nearStars: [], lightning: null, capital: null,
+                 nebula: [], nearStars: [], lightning: null, capital: null, turret: null,
                  ridgeAmt: 0, ridgeTarget: 0,
                  nextStar: 0, nextComet: 0, nextPoly: 0, nextCycle: 0, nextGlyph: 0, nextShip: 0, nextTransit: 0,
-                 nextRidge: 0, nextLightning: 0, nextCapital: 0 };
+                 nextRidge: 0, nextLightning: 0, nextCapital: 0, nextTurret: 0 };
 
     function buildRidge(){
         // y-down normalized; horizon is at ~0.60, ridge sits just above it (smaller y)
@@ -794,6 +800,14 @@
 
         // capital-ship flyby (appears randomly within ~5 min)
         FX.capital = null; FX.nextCapital = rand(30, 300);
+
+        // ground turret (appears randomly within ~5 min)
+        FX.turret = null; FX.nextTurret = rand(60, 300);
+    }
+
+    function makeTurret(){
+        const z = rand(9, 16), x = rand(-0.42, 0.42) * z * 0.6 * (sw / sh);   // somewhere across the grid
+        return { x, z, h: 0, target: null, switchCool: 0, fireCool: CONFIG.turretFireGap, aim: { x, h: 0.2, z: z + 1 } };
     }
 
     function updateFX(dt){
@@ -927,7 +941,7 @@
                 tr.fireCool = CONFIG.blastCooldown;
                 if (Math.random() >= CONFIG.blastFireProb) continue;
                 const Sxy = CONFIG.shipScale * best.sh.scaleMul, from = { x: best.sx, h: best.shh, z: best.sz + Sxy * 1.3 };
-                fireVolley(from, Sxy * 0.45, leadAim(from, tr.x, tr.h, tr.z, tr.ovx, tr.ovy, tr.ovz - gsB), tr, 'ally', CY);
+                fireVolley(from, Sxy * 0.45, leadAim(from, tr.x, tr.h, tr.z, tr.ovx, tr.ovy, tr.ovz - gsB), tr, 'ally', CY, CONFIG.boltAccuracy);
             }
 
             // formation also fires on the capital ship (heavy target — takes many hits)
@@ -937,7 +951,7 @@
                     cap.fireCool = CONFIG.blastCooldown;
                     if (Math.random() < CONFIG.blastFireProb){
                         const Sxy = CONFIG.shipScale * best.sh.scaleMul, from = { x: best.sx, h: best.shh, z: best.sz + Sxy * 1.3 };
-                        fireVolley(from, Sxy * 0.45, leadAim(from, cap.x, cap.h, cap.z, cap.ovx, cap.ovy, cap.ovz), cap, 'ally', CY);
+                        fireVolley(from, Sxy * 0.45, leadAim(from, cap.x, cap.h, cap.z, cap.ovx, cap.ovy, cap.ovz), cap, 'ally', CY, CONFIG.capHitChance);
                     }
                 }
             }
@@ -957,7 +971,33 @@
                     let aim;
                     if (tgt.slot){ const s = tgt.slot; aim = { x: FX.squad.xw0 + s.dxw, h: CONFIG.shipHeight + s.dh, z: FX.squad.baseZ + s.dz }; }
                     else aim = leadAim(from, tgt.x, tgt.h, tgt.z, tgt.ovx, tgt.ovy, tgt.ovz - gsB);
-                    fireVolley(from, capSxy * 0.35, aim, tgt, 'enemy', CAPC);
+                    fireVolley(from, capSxy * 0.35, aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy);
+                }
+            }
+        }
+
+        // ground turret: locks one target at a time (re-picks every 2s), tracks it, sprays fast + inaccurately
+        if (FX.turret){
+            const tu = FX.turret;
+            const pool = [];                                       // everything EXCEPT the capital ship
+            if (FX.squad){ const sq = FX.squad, t = sq.t;
+                for (const sh of sq.ships) if (!sh.dead && t >= sh.arriveAt + sh.arrDur && t < sh.departAt) pool.push(sh); }
+            for (const tr of FX.transits) if (!tr.dead && tr.z > 2) pool.push(tr);
+            if (tu.switchCool <= 0 || !tu.target || tu.target.dead){
+                tu.target = pool.length ? pool[Math.random() * pool.length | 0] : null;
+                tu.switchCool = CONFIG.turretSwitch;
+            }
+            const tg = tu.target;
+            if (tg && !tg.dead){
+                const apex = { x: tu.x, h: tu.h + 0.18, z: tu.z };  // barrel pivot atop the base
+                const gx = tg.slot ? (FX.squad.xw0 + tg.slot.dxw) : tg.x;
+                const gh = tg.slot ? (CONFIG.shipHeight + tg.slot.dh) : tg.h;
+                const gz = tg.slot ? (FX.squad.baseZ + tg.slot.dz) : tg.z;
+                const vx = tg.slot ? 0 : tg.ovx, vy = tg.slot ? 0 : tg.ovy, vz = tg.slot ? 0 : tg.ovz - gsB;
+                tu.aim = leadAim(apex, gx, gh, gz, vx, vy, vz);     // barrel tracks the lead point
+                if (tu.fireCool <= 0){
+                    tu.fireCool = CONFIG.turretFireGap;
+                    fireVolley(apex, 0.05, tu.aim, tg, 'enemy', CAPC, CONFIG.turretAccuracy);
                 }
             }
         }
@@ -971,14 +1011,14 @@
             if (u >= 1){
                 const tg = b.target;
                 if (b.decisive && tg && !tg.dead){
-                    if (b.kind === 'enemy'){                         // capital -> fighter or transit
-                        if (Math.random() < CONFIG.capAccuracy){
+                    if (b.kind === 'enemy'){                         // capital/turret -> fighter or transit
+                        if (Math.random() < b.acc){
                             tg.dead = true;
                             if (tg.slot) detonate(b.tx, b.ty, b.tz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
                             else detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
                         }
                     } else if (tg.cap){                             // formation -> capital (chip away at HP)
-                        if (Math.random() < CONFIG.capHitChance){
+                        if (Math.random() < b.acc){
                             sparkBurst(b.x, b.y, b.z, 6);
                             if (--tg.hp <= 0){
                                 tg.dead = true;
@@ -986,7 +1026,7 @@
                                 FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]);
                             }
                         }
-                    } else if (Math.random() < CONFIG.boltAccuracy){ // formation -> transit
+                    } else if (Math.random() < b.acc){              // formation -> transit
                         tg.dead = true;
                         detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
                     }
@@ -1038,6 +1078,16 @@
             const inv = 1 / (Math.max(0.5, c.z) * 0.6), uvx = 0.5 + cam.headSend + c.x * inv / (sw / sh);
             c.onScreen = uvx > 0.03 && uvx < 0.97;              // gate its fire to when the user can see it
             if (uvx < -0.9 || uvx > 1.9){ FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]); }
+        }
+
+        // ground turret: rides the grid toward the camera, then retires once it sweeps past
+        if (!FX.turret){ FX.nextTurret -= dt; if (FX.nextTurret <= 0) FX.turret = makeTurret(); }
+        else {
+            const tu = FX.turret;
+            tu.z -= (reduced ? 0 : CONFIG.gridScroll) * dt;     // tracks with the grid
+            if (tu.switchCool > 0) tu.switchCool -= dt;
+            if (tu.fireCool > 0) tu.fireCool -= dt;
+            if (tu.z < 1.0){ FX.turret = null; FX.nextTurret = rand(CONFIG.turretGap[0], CONFIG.turretGap[1]); }
         }
 
         // falling embers from detonations — arc out, fall under gravity, spark on the grid floor
@@ -1104,14 +1154,14 @@
         }
         return { x: tx + vx*T, h: ty + vy*T, z: tz + vz*T };
     }
-    // twin tracers from a muzzle `from` to an `aim` point; only the first rolls the kill at impact
-    function fireVolley(from, muzOff, aim, target, kind, col){
+    // twin tracers from a muzzle `from` to an `aim` point; only the first rolls the kill at impact (prob `acc`)
+    function fireVolley(from, muzOff, aim, target, kind, col, acc){
         const T = Math.max(0.05, Math.hypot(aim.x - from.x, aim.h - from.h, aim.z - from.z) / CONFIG.boltSpeed);
         let primary = true;
         for (const sgn of [-1, 1]){
             const ox = from.x + sgn * muzOff;
             FX.bolts.push({ x0: ox, y0: from.h, z0: from.z, x: ox, y: from.h, z: from.z,
-                tx: aim.x, ty: aim.h, tz: aim.z, T, age: 0, delay: CONFIG.blastReact, target, decisive: primary, kind, col });
+                tx: aim.x, ty: aim.h, tz: aim.z, T, age: 0, delay: CONFIG.blastReact, target, decisive: primary, kind, col, acc });
             primary = false;
         }
     }
@@ -1537,6 +1587,25 @@
                                (HOT[0]+(OM[0]-HOT[0])*mix)*tb, (HOT[1]+(OM[1]-HOT[1])*mix)*tb, (HOT[2]+(OM[2]-HOT[2])*mix)*tb);
                     }
                 }
+            }
+        }
+
+        // --- ground turret: small ominous emplacement on the grid; barrel tracks its target ---
+        if (FX.turret){
+            const tu = FX.turret, OM = CONFIG.col.cap, sB = 0.13, baseH = 0.18, barrelLen = 0.34;
+            const fade = Math.min(1, Math.max(0, (tu.z - 1.0) / 1.4));      // fade out as it sweeps past the camera
+            if (fade > 0.01){
+                const A = projectWorld(tu.x, tu.z, baseH, aspect);          // barrel pivot atop the base
+                const corners = [[sB, sB], [-sB, sB], [-sB, -sB], [sB, -sB]].map(d => projectWorld(tu.x + d[0], tu.z + d[1], 0, aspect));
+                for (let k = 0; k < 4; k++){
+                    const c0 = corners[k], c1 = corners[(k + 1) % 4];
+                    pushLineClip(c0.x, c0.y, c1.x, c1.y, 0.7 * fade, OM);   // base ring on the grid
+                    pushLineClip(c0.x, c0.y, A.x, A.y, 0.55 * fade, OM);   // spokes up to the pivot
+                }
+                const dx = tu.aim.x - tu.x, dy = tu.aim.h - baseH, dz = tu.aim.z - tu.z, dl = Math.hypot(dx, dy, dz) || 1;
+                const B = projectWorld(tu.x + dx/dl*barrelLen, tu.z + dz/dl*barrelLen, baseH + dy/dl*barrelLen, aspect);
+                pushLineClip(A.x, A.y, B.x, B.y, 1.0 * fade, OM);          // barrel toward the aim
+                pushPt((B.x + 1) * 0.5, (1 - B.y) * 0.5, Math.min(11, B.inv * 22) * dprNow, OM[0]*1.3*fade, OM[1]*0.4*fade, OM[2]*0.4*fade);
             }
         }
 
