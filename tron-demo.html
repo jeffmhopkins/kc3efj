@@ -1204,7 +1204,7 @@
             const pool = [];                                       // everything EXCEPT the capital ship
             if (FX.squad){ const sq = FX.squad, t = sq.t;          // any squad member on stage, slotted or maneuvering
                 for (const sh of sq.ships) if (!sh.dead && sh.wx !== undefined && t >= sh.arriveAt && t < sh.departAt + sh.depDur) pool.push(sh); }
-            for (const tr of FX.transits) if (!tr.dead && tr.z > 2) pool.push(tr);
+            for (const tr of FX.transits) if (!tr.dead && !tr.foe && tr.z > 2) pool.push(tr);   // never the ominous red foes (same side)
             if (FX.car && !FX.car.dead && FX.car.z > 2) pool.push(FX.car);   // turret may lock the car, but every shot misses
             if (tu.switchCool <= 0 || !tu.target || tu.target.dead){
                 tu.target = pool.length ? pool[Math.random() * pool.length | 0] : null;
