@@ -1543,7 +1543,7 @@
                 const tl = Math.hypot(travel[0], travel[1], travel[2]);
                 if (tl > 1e-4){ bx = -travel[0] / tl; by = -travel[1] / tl; bz = -travel[2] / tl; }
             }
-            const TR = 12, segZ = 0.05, segL = 0.04;
+            const TR = 16, segZ = Sxy * 0.15, segL = Sxy * 0.12;   // spacing scales with ship size (small ships -> tight, continuous trail)
             for (const e of M.ENG){
                 const er = rot(e);
                 const ex = xw + er[0] * Sxy, ez = z + er[2] * Sz, eh = h + er[1] * Sxy;   // engine world pos
