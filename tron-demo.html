@@ -916,20 +916,20 @@
         const cap = FX.capital;
         if (FX.squad){
             const sq = FX.squad, t = sq.t;
-            const holding = sh => !sh.dead && t >= sh.arriveAt + sh.arrDur && t < sh.departAt;  // alive, formed up
+            // any non-dead squad member that is currently on stage can fire — arriving, holding OR departing
+            const canFire = sh => !sh.dead && sh.wx !== undefined && t >= sh.arriveAt && t < sh.departAt + sh.depDur;
             const cosCone = Math.cos(CONFIG.blastCone);
-            const slotPos = sh => { const s = sh.slot; return { x: sq.xw0 + s.dxw, z: sq.baseZ + s.dz, h: CONFIG.shipHeight + s.dh }; };
-            // nearest holding ship whose forward cone contains a world point; returns {best, seen}
+            // nearest firing-capable ship whose forward cone contains a world point, from its LIVE position
             const acquire = (x, z, h) => {
                 let best = null, bestDot = cosCone, seen = false;
                 for (const sh of sq.ships){
-                    if (!holding(sh)) continue;
-                    const sp = slotPos(sh), dx = x - sp.x, dz = z - sp.z, dh = h - sp.h;
+                    if (!canFire(sh)) continue;
+                    const px = sh.wx, pz = sh.wz, ph = sh.wh, dx = x - px, dz = z - pz, dh = h - ph;
                     if (dz <= 0.3) continue;
                     const dot = dz / Math.hypot(dx, dz, dh);
                     if (dot <= cosCone) continue;
                     seen = true;
-                    if (dot > bestDot){ bestDot = dot; best = { sh, sx: sp.x, sz: sp.z, shh: sp.h }; }
+                    if (dot > bestDot){ bestDot = dot; best = { sh, sx: px, sz: pz, shh: ph }; }
                 }
                 return { best, seen };
             };
@@ -1494,6 +1494,7 @@
                     aimAlong(travel);
                     roll = wob * 0.14 * Math.sin(t * 0.53 + sh.phase) + sq.dir * s.ps * CONFIG.shipMaxRoll * peel;
                 }
+                sh.wx = xw; sh.wz = z; sh.wh = h;                                // live pos for the combat code
                 if (fade <= 0.001) continue;
                 drawShip(xw, z, h, roll, yaw, pitch, sh.scaleMul, sh.col, fade, sh.lead, SHIP_MODELS[sh.model], 1, travel);
             }
