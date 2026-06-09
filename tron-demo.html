@@ -158,7 +158,9 @@
         return;
     }
 
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // This is a decorative full-screen screensaver, so we always run the animation loop.
+    // (Honoring prefers-reduced-motion froze some browsers on the first frame until a resize.)
+    const reduced = false;
     const isMobile = window.innerWidth <= 768 || 'ontouchstart' in window;
 
     // ──────────────────────────────────────────────────────────────
