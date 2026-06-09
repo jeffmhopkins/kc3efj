@@ -1129,8 +1129,13 @@
                 const vx = tg.slot ? 0 : tg.ovx, vy = tg.slot ? 0 : tg.ovy, vz = tg.slot ? 0 : tg.ovz - gsB;
                 tu.aim = leadAim(apex, gx, gh, gz, vx, vy, vz);     // barrel tracks the lead point
                 const tinv = 1 / (Math.max(0.5, tu.z) * 0.6), tuvx = 0.5 + cam.headSend + tu.x * tinv / aspB;
-                const onScreen = tuvx > 0.02 && tuvx < 0.98 && tu.z > 0.7;   // never fire while off-screen
-                if (onScreen && tu.fireCool <= 0){
+                const onScreen = tuvx > 0.02 && tuvx < 0.98 && tu.z > 0.7;   // turret itself must be on-screen
+                // the TARGET must also be on-screen — never fire at something the viewer can't see
+                const gzc = Math.max(0.5, gz), ginv = 1 / (gzc * 0.6);
+                const tgUvx = 0.5 + cam.headSend + gx * ginv / aspB;
+                const tgUvy = (CONFIG.horizon + cam.pitchSend) - 0.20 / gzc + gh * ginv;
+                const tgtOn = gz > 1.0 && tgUvx > 0.02 && tgUvx < 0.98 && tgUvy > 0.02 && tgUvy < 0.98;
+                if (onScreen && tgtOn && tu.fireCool <= 0){
                     tu.fireCool = CONFIG.turretFireGap;
                     const tAcc = tg.isCar ? 0 : CONFIG.turretAccuracy;   // the car is untouchable by the turret — every shot misses
                     fireVolley(apex, 0.009 * gg * 0.5, tu.aim, tg, 'enemy', CAPC, tAcc);   // twin bolts from the two barrels
@@ -1157,14 +1162,15 @@
                             detonate(tg.x, tg.h, tg.z, CAPITAL_MODEL, tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 4, CAPC);
                             FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]);
                         }
+                    } else if (tg.isTurret){                        // indestructible: EVERY shot lands an ineffective hit (sparks, never passes through)
+                        sparkBurst(b.x, b.y, b.z, 5);
+                        hit = true;
                     } else if (Math.random() < b.acc){
                         hit = true;
                         if (b.kind === 'enemy'){                     // capital/turret -> fighter or transit
                             tg.dead = true;
                             if (tg.slot) detonate(tg.wx, tg.wh, tg.wz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
                             else detonate(tg.x, tg.h, tg.z, tg.isCar ? CAR_MODEL : SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, tg.isCar ? CONFIG.col.orange : CY);
-                        } else if (tg.isTurret){                    // indestructible — sparks only
-                            sparkBurst(b.x, b.y, b.z, 5);
                         } else if (tg.isPoly){                      // tumbling polyhedron: big blast
                             tg.dead = true;
                             detonate(b.tx, b.ty, b.tz, OCTA_MODEL, tg.rx, tg.ry, 0, 1.6, 4, tg.col);
