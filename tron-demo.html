@@ -890,7 +890,7 @@
         const capVis = !!(FX.capital && FX.capital.onScreen);
         FX.nextTransit -= dt;
         if (FX.nextTransit <= 0 && FX.transits.length < (capVis ? 4 : 2)){
-            const dir = Math.random() < 0.5 ? 1 : -1, z = rand(12, 22);
+            const dir = Math.random() < 0.5 ? 1 : -1, z = rand(12, 34);   // deeper range — some pass far out
             const span = z * 0.6 * (sw / sh) * 0.85;
             // own heading varies off pure tangent: angle from +z (forward), ~90deg +/- up to ~50deg
             const sp = rand(0.6, 2.6), dev = rand(-0.9, 0.9);   // varied speed + heading
@@ -918,7 +918,7 @@
             const zc = Math.max(0.5, tr.z), inv = 1 / (zc * 0.6);
             const uvx = 0.5 + cam.headSend + tr.x * inv / aspT;
             const uvy = (CONFIG.horizon + cam.pitchSend) - 0.20 / zc + tr.h * inv;   // y-up
-            if (tr.dead || tr.z < 2.5 || tr.z > 32 || uvx < -0.4 || uvx > 1.4 || uvy > 1.35) FX.transits.splice(i, 1);
+            if (tr.dead || tr.z < 1.0 || tr.z > 46 || uvx < -0.4 || uvx > 1.4 || uvy > 1.35) FX.transits.splice(i, 1);
         }
 
         // ── space battle: formation snipes crossing craft; the capital ship fires back ──
@@ -1259,7 +1259,8 @@
                 col: s.lead ? CONFIG.col.hot : CONFIG.col.cyan,
                 scaleMul: (s.lead ? 1.25 : 1.0) * rand(0.8, 1.2) * 0.33,  // ~2/3 of the sun's radius at most, +/-20% variation
                 arriveAt: arriveAt[i], arrDur: ARR_DUR, departAt: departAt[i], depDur: DEP_DUR,
-                edx, edz, edh, fireCool: Math.random() * CONFIG.blastCooldown,   // desynced so they don't volley in lockstep
+                edx, edz, edh, hVar: rand(-0.05, 0.05),   // per-ship hold-height variation
+                fireCool: Math.random() * CONFIG.blastCooldown,   // desynced so they don't volley in lockstep
             };
         });
         return { t: 0, dir, xw0, baseZ, ships, endT };
@@ -1495,7 +1496,7 @@
             for (const sh of sq.ships){
                 if (t < sh.arriveAt || sh.dead) continue;                        // not on stage yet, or shot down
                 const s = sh.slot;
-                const slotXw = sq.xw0 + s.dxw, slotZ = sq.baseZ + s.dz, slotH = CONFIG.shipHeight + s.dh;
+                const slotXw = sq.xw0 + s.dxw, slotZ = sq.baseZ + s.dz, slotH = CONFIG.shipHeight + s.dh + sh.hVar;
                 let xw, z, h, roll = 0, yaw = 0, pitch = 0, fade, travel = null;
                 // nose ALWAYS points along the flight path: derive yaw/pitch from the same `travel`
                 // vector the plume uses, so the body, its motion and the jet can never disagree.
@@ -1538,7 +1539,7 @@
         // distant transit ships (nose along their own heading; fade out as they pass near)
         for (const tr of FX.transits){
             if (tr.dead) continue;                              // destroyed this frame — the blast stands in for it
-            const fade = 0.95 * Math.min(1, (tr.z - 2.5) / 2.5);   // brighter so they read against the sky
+            const fade = 0.95 * Math.min(1, (tr.z - 1.0) / 1.5);   // fade only when very close, so they can pass nearer
             if (fade <= 0.01) continue;
             drawShip(tr.x, tr.z, tr.h, tr.roll, tr.yaw, tr.pitch, tr.scaleMul, CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model], tr.plume);
         }
