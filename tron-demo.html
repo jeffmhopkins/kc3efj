@@ -176,6 +176,7 @@
     uniform float uHeading;   // signed screen-x fraction: shared yaw (grid VP + sun)
     uniform float uPitch;     // signed screen-y fraction: shared pitch (bounded)
     uniform float uSunOnly;   // 1 = render only the sun disc (overlay pass over the network)
+    uniform float uTerrainPass; // 1 = render only the raymarched terrain (opaque, discards sky) over the cameos
     uniform float uScroll;
     uniform float uHorizon;
     uniform vec3  uCyan;
@@ -207,64 +208,45 @@
         float horizon = uHorizon + uPitch;   // pitched horizon shared by every layer
         vec3 col;
 
-        // ---- raymarched terrain: flat grid valley in the centre + jagged side mountains ----
-        // view ray param by depth z (same projection as the cameos): along the ray,
-        //   x(z) = (uv.x-0.5-uHeading)*z*0.6*aspect ,  y(z) = (uv.y-horizon)*z*0.6 + 0.12
-        bool hitT = false;
-        float hZ = 0.0, hX = 0.0, hH = 0.0, zr = 0.40;
-        for (int i = 0; i < 36; i++){
-            float zn = zr * 1.14;
-            float yn = (uv.y - horizon) * zn * 0.6 + 0.12;
-            float xn = (uv.x - 0.5 - uHeading) * zn * 0.6 * aspect;
-            if (yn <= terrH(xn, zn)){
-                float a = zr, b = zn;
-                for (int j = 0; j < 5; j++){                 // refine the crossing
-                    float zm = 0.5 * (a + b);
-                    float ym = (uv.y - horizon) * zm * 0.6 + 0.12;
-                    float xm = (uv.x - 0.5 - uHeading) * zm * 0.6 * aspect;
-                    if (ym <= terrH(xm, zm)) b = zm; else a = zm;
+        // ===== TERRAIN PASS: raymarch; opaque where it hits, discard elsewhere so the background shows =====
+        // drawn AFTER the network/cameos, so the mountains occlude them. View ray param by depth z (same
+        // projection as the cameos): x(z)=(uv.x-0.5-uHeading)*z*0.6*aspect, y(z)=(uv.y-horizon)*z*0.6+0.12
+        if (uTerrainPass > 0.5){
+            bool hitT = false;
+            float hZ = 0.0, hX = 0.0, hH = 0.0, zr = 0.40;
+            for (int i = 0; i < 36; i++){
+                float zn = zr * 1.14;
+                float yn = (uv.y - horizon) * zn * 0.6 + 0.12;
+                float xn = (uv.x - 0.5 - uHeading) * zn * 0.6 * aspect;
+                if (yn <= terrH(xn, zn)){
+                    float a = zr, b = zn;
+                    for (int j = 0; j < 5; j++){                 // refine the crossing
+                        float zm = 0.5 * (a + b);
+                        float ym = (uv.y - horizon) * zm * 0.6 + 0.12;
+                        float xm = (uv.x - 0.5 - uHeading) * zm * 0.6 * aspect;
+                        if (ym <= terrH(xm, zm)) b = zm; else a = zm;
+                    }
+                    hZ = b; hX = (uv.x - 0.5 - uHeading) * hZ * 0.6 * aspect; hH = terrH(hX, hZ); hitT = true; break;
                 }
-                hZ = b; hX = (uv.x - 0.5 - uHeading) * hZ * 0.6 * aspect; hH = terrH(hX, hZ); hitT = true; break;
+                zr = zn;
+                if (zr > 46.0) break;
             }
-            zr = zn;
-            if (zr > 46.0) break;
-        }
-        // grid coords + AA width computed for every pixel so fwidth() stays defined across the quad
-        vec2  g  = vec2(hX, hZ + uTime * uScroll) * 1.5;
-        vec2  fw = clamp(fwidth(g), vec2(0.0008), vec2(0.25));   // clamp so mountain silhouettes don't blow up the AA
-        if (hitT){
-            vec2  dd   = abs(fract(g) - 0.5) / fw;
+            // grid coords + AA width computed for EVERY pixel (incl. would-be-discarded) so fwidth stays defined
+            vec2  g  = vec2(hX, hZ + uTime * uScroll) * 1.5;
+            vec2  fw = clamp(fwidth(g), vec2(0.0008), vec2(0.25));   // clamp so silhouettes don't blow up the AA
+            if (!hitT) discard;                                  // no terrain here — keep the sky/network behind
+            vec2  dd = abs(fract(g) - 0.5) / fw;
             float line = 1.0 - clamp(min(dd.x, dd.y), 0.0, 1.0);
             float fade = exp(-hZ * 0.18);
             vec3  gcol = mix(uCyan, uMagenta, clamp(uv.x, 0.0, 1.0));
-            col  = vec3(0.03, 0.006, 0.07);                     // floor/terrain base
+            col  = vec3(0.03, 0.006, 0.07);                      // floor/terrain base
             col += gcol * line * fade * 1.35;
-            col += gcol * hH * 0.06 * fade;                     // faint height tint so peaks read
-        } else {
-            // ---- sky gradient ----
-            float t = (uv.y - horizon) / (1.0 - horizon);
-            vec3 skyHorizon = vec3(0.42, 0.10, 0.40);
-            vec3 skyMid     = vec3(0.10, 0.02, 0.20);
-            vec3 skyTop     = vec3(0.039, 0.004, 0.094);
-            col = mix(skyHorizon, skyMid, smoothstep(0.0, 0.45, t));
-            col = mix(col, skyTop, smoothstep(0.35, 1.0, t));
-            // ---- stars: round points at random sub-cell positions, irregular twinkle ----
-            vec2 starUv = uv + vec2(uHeading * 0.15, uPitch * 0.15);
-            vec2 gv = starUv * vec2(aspect, 1.0) * 90.0;
-            vec2 id = floor(gv);
-            vec2 fp = fract(gv);
-            float h = hash(id);
-            if (h > 0.93) {                                       // ~7% of cells hold a star
-                vec2 sPos = vec2(hash(id + 11.3), hash(id + 41.7));
-                float core = smoothstep(0.10, 0.0, length(fp - sPos));   // soft round dot
-                float rate = 0.6 + 2.4 * hash(id + 7.1);          // per-star twinkle speed
-                float tw   = 0.45 + 0.55 * sin(uTime * rate + h * 60.0);
-                float mag  = 0.5 + 0.5 * hash(id + 3.3);          // per-star brightness
-                col += vec3(0.8, 0.9, 1.0) * core * tw * mag * smoothstep(0.12, 0.6, t);
-            }
+            col += gcol * hH * 0.06 * fade;                      // faint height tint so peaks read
+            fragColor = vec4(col, 1.0);
+            return;
         }
 
-        // ---- retro sun (overlaid across whole frame so it bleeds over grid) ----
+        // ---- retro sun params ----
         float sunX  = 0.5 + uHeading;          // sun sits ON the shared vanishing point
         float sunR  = 0.17;
         float sunCY = horizon + sunR * 0.55;   // rides the pitched horizon
@@ -273,24 +255,42 @@
         float disc = smoothstep(sunR, sunR - 0.004, r);
         float gpos = (uv.y - (sunCY - sunR)) / (2.0 * sunR);   // 0 bottom .. 1 top
         vec3  sunCol = mix(vec3(1.0,0.85,0.42), vec3(1.0,0.20,0.60), clamp(gpos,0.0,1.0));
-        // horizontal slits in lower half, thickening downward
-        float slit = 1.0;
+        float slit = 1.0;                                       // horizontal slits in lower half
         float sy = sunCY - uv.y;
         if (sy > 0.0) {
             float k = clamp(sy / sunR, 0.0, 1.0);
             float lines = fract(uv.y * 55.0);
             slit = 1.0 - step(lines, clamp(k * 0.95, 0.0, 0.85));
         }
-        float aboveHz = smoothstep(horizon - 0.004, horizon + 0.004, uv.y);   // hide everything below the horizon
-        if (uSunOnly > 0.5) {                                   // overlay pass: just the disc, on top of the network
+        float aboveHz = smoothstep(horizon - 0.004, horizon + 0.004, uv.y);   // hide the sun below the horizon
+        if (uSunOnly > 0.5) {                                   // sun-disc pass (drawn just before the terrain pass)
             fragColor = vec4(sunCol, disc * slit * aboveHz);
             return;
         }
 
-        // base pass: glow stays behind the network; disc is drawn later (overlay) so dots/lines sit behind it
-        col += vec3(1.0, 0.32, 0.52) * exp(-r * 7.0) * 0.5 * aboveHz;   // sun glow (above horizon only)
-        col += uCyan * exp(-abs(uv.y - horizon) * 220.0) * 0.6; // bright cyan horizon seam
-
+        // ===== SKY PASS (background): gradient + stars + sun glow + horizon seam =====
+        float t = (uv.y - horizon) / (1.0 - horizon);
+        vec3 skyHorizon = vec3(0.42, 0.10, 0.40);
+        vec3 skyMid     = vec3(0.10, 0.02, 0.20);
+        vec3 skyTop     = vec3(0.039, 0.004, 0.094);
+        col = mix(skyHorizon, skyMid, smoothstep(0.0, 0.45, t));
+        col = mix(col, skyTop, smoothstep(0.35, 1.0, t));
+        // ---- stars ----
+        vec2 starUv = uv + vec2(uHeading * 0.15, uPitch * 0.15);
+        vec2 gv = starUv * vec2(aspect, 1.0) * 90.0;
+        vec2 id = floor(gv);
+        vec2 fp = fract(gv);
+        float h = hash(id);
+        if (h > 0.93) {
+            vec2 sPos = vec2(hash(id + 11.3), hash(id + 41.7));
+            float core = smoothstep(0.10, 0.0, length(fp - sPos));
+            float rate = 0.6 + 2.4 * hash(id + 7.1);
+            float tw   = 0.45 + 0.55 * sin(uTime * rate + h * 60.0);
+            float mag  = 0.5 + 0.5 * hash(id + 3.3);
+            col += vec3(0.8, 0.9, 1.0) * core * tw * mag * smoothstep(0.12, 0.6, t);
+        }
+        col += vec3(1.0, 0.32, 0.52) * exp(-r * 7.0) * 0.5 * aboveHz;   // sun glow
+        col += uCyan * exp(-abs(uv.y - horizon) * 220.0) * 0.6;        // cyan horizon seam
         fragColor = vec4(col, 1.0);
     }`;
 
@@ -1839,7 +1839,8 @@
         gl.uniform3fv(GL.sceneU.uCyan, C.cyan);
         gl.uniform3fv(GL.sceneU.uMagenta, C.magenta);
         gl.uniform1f(GL.sceneU.uSunOnly, 0.0);
-        drawQuad();
+        gl.uniform1f(GL.sceneU.uTerrainPass, 0.0);
+        drawQuad();                                         // sky pass (no terrain yet)
 
         // network drawn additively on top (into the same FBO so bloom sees it)
         gl.enable(gl.BLEND);
@@ -1862,14 +1863,22 @@
         // background cameos (nebula, stars, ridge) — additive, BEFORE the sun so they sit behind it
         drawFX(buildFX(timeSec, true), false);
 
-        // sun disc overlay (alpha-blended) AFTER the network + background cameos
+        // sun disc (alpha-blended) AFTER the network + background cameos — so they sit behind the sun
         gl.useProgram(GL.scene);
         gl.uniform1f(GL.sceneU.uSunOnly, 1.0);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         drawQuad();
-        gl.blendFunc(gl.ONE, gl.ONE);                       // back to additive for cameos
 
-        // foreground cameos in front of the sun: hull fills MULTIPLY (silhouette the sun), edges/glows add
+        // TERRAIN pass: opaque, drawn AFTER the sky/network/ridge/sun so the mountains occlude all of them
+        gl.disable(gl.BLEND);
+        gl.uniform1f(GL.sceneU.uSunOnly, 0.0);
+        gl.uniform1f(GL.sceneU.uTerrainPass, 1.0);
+        drawQuad();
+        gl.uniform1f(GL.sceneU.uTerrainPass, 0.0);
+
+        // foreground cameos in front of the terrain: hull fills MULTIPLY (silhouette the sun), edges/glows add
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.ONE, gl.ONE);
         drawFX(buildFX(timeSec, false), true);
         gl.disable(gl.BLEND);
 
