@@ -1104,12 +1104,19 @@
         }
 
         // capital RETURNS FIRE — only while it is itself on-screen; targets any on-stage fighter AND transits
+        // (every candidate must ALSO be on-screen — never fire at something the viewer can't see)
+        const visOnScreen = (x, z, h) => {
+            const zc = Math.max(0.5, z), inv = 1 / (zc * 0.6);
+            const uvx = 0.5 + cam.headSend + x * inv / aspB;
+            const uvy = (CONFIG.horizon + cam.pitchSend) - 0.20 / zc + h * inv;
+            return z > 1.0 && uvx > 0.02 && uvx < 0.98 && uvy > 0.02 && uvy < 0.98;
+        };
         if (cap && !cap.dead && cap.onScreen && cap.backCool <= 0){
             const pool = [];
             if (FX.squad){ const sq = FX.squad, t = sq.t;       // any squad member on stage, slotted or maneuvering
-                for (const sh of sq.ships) if (!sh.dead && sh.wx !== undefined && t >= sh.arriveAt && t < sh.departAt + sh.depDur) pool.push(sh); }
-            for (const tr of FX.transits) if (!tr.dead && tr.z > 4) pool.push(tr);
-            if (FX.car && !FX.car.dead && FX.car.z > 4) pool.push(FX.car);
+                for (const sh of sq.ships) if (!sh.dead && sh.wx !== undefined && t >= sh.arriveAt && t < sh.departAt + sh.depDur && visOnScreen(sh.wx, sh.wz, sh.wh)) pool.push(sh); }
+            for (const tr of FX.transits) if (!tr.dead && tr.z > 4 && visOnScreen(tr.x, tr.z, tr.h)) pool.push(tr);
+            if (FX.car && !FX.car.dead && FX.car.z > 4 && visOnScreen(FX.car.x, FX.car.z, FX.car.h)) pool.push(FX.car);
             if (pool.length){
                 cap.backCool = CONFIG.capFireGap;
                 if (Math.random() < CONFIG.capFireProb){
