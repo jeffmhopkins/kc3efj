@@ -1374,7 +1374,7 @@
             if (tu.switchCool > 0) tu.switchCool -= dt;
             if (tu.fireCool > 0) tu.fireCool -= dt;
             if (tu.shotCool > 0) tu.shotCool -= dt;             // formation's re-fire timer against it
-            if (tu.z < 0.55){ FX.turret = null; FX.nextTurret = rand(CONFIG.turretGap[0], CONFIG.turretGap[1]); }
+            if (tu.z < 0.2){ FX.turret = null; FX.nextTurret = rand(CONFIG.turretGap[0], CONFIG.turretGap[1]); }
         }
 
         // rare light-car: streaks forward past the camera toward the sun on the grid
@@ -1382,7 +1382,7 @@
         else {
             const cr = FX.car;
             cr.x += cr.ovx * dt; cr.z += (cr.ovz - (reduced ? 0 : CONFIG.gridScroll)) * dt; cr.h += cr.ovy * dt;
-            if (cr.dead || cr.z > 44){ FX.car = null; FX.nextCar = rand(CONFIG.carGap[0], CONFIG.carGap[1]); }
+            if (cr.dead || cr.z > FAR_Z){ FX.car = null; FX.nextCar = rand(CONFIG.carGap[0], CONFIG.carGap[1]); }   // shared far cull like the transits
         }
 
         // falling embers from detonations — arc out, fall under gravity, spark on the grid floor
@@ -1841,7 +1841,7 @@
         }
         // rare light-car streaking toward the sun (bright orange; fades in just past the camera)
         if (FX.car && !FX.car.dead){
-            const ca = FX.car, fade = 0.95 * Math.min(1, (ca.z - 0.6) / 0.8);
+            const ca = FX.car, fade = 0.95 * Math.min(1, (ca.z - 0.6) / 0.8) * farFade(ca.z);
             if (fade > 0.01)
                 drawShip(ca.x, ca.z, ca.h, ca.roll, ca.yaw, ca.pitch, ca.scaleMul, CONFIG.col.orange, fade, true, CAR_MODEL, 1.3);
         }
