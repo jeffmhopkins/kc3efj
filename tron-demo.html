@@ -1085,27 +1085,30 @@
                 b.resolved = true;
                 const tg = b.target;
                 let hit = false;
-                if (b.decisive && tg && !tg.dead && Math.random() < b.acc){
-                    hit = true;
-                    if (b.kind === 'enemy'){                         // capital/turret -> fighter or transit
-                        tg.dead = true;
-                        if (tg.slot) detonate(tg.wx, tg.wh, tg.wz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
-                        else detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
-                    } else if (tg.isTurret){                        // indestructible — sparks only
-                        sparkBurst(b.x, b.y, b.z, 5);
-                    } else if (tg.cap){                             // chip the capital's HP
+                if (b.decisive && tg && !tg.dead){
+                    if (tg.cap){                                    // big hull: EVERY shot lands a visible hit (mostly ineffective)
                         sparkBurst(b.x, b.y, b.z, 6);
-                        if (--tg.hp <= 0){
+                        hit = true;                                 // never glances off / flies past the capital
+                        if (Math.random() < b.acc && --tg.hp <= 0){ // accuracy only decides whether it chips HP
                             tg.dead = true;
                             detonate(tg.x, tg.h, tg.z, CAPITAL_MODEL, tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 4, CAPC);
                             FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]);
                         }
-                    } else if (tg.isPoly){                          // tumbling polyhedron: big blast
-                        tg.dead = true;
-                        detonate(b.tx, b.ty, b.tz, OCTA_MODEL, tg.rx, tg.ry, 0, 1.6, 4, tg.col);
-                    } else {                                        // transit
-                        tg.dead = true;
-                        detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
+                    } else if (Math.random() < b.acc){
+                        hit = true;
+                        if (b.kind === 'enemy'){                     // capital/turret -> fighter or transit
+                            tg.dead = true;
+                            if (tg.slot) detonate(tg.wx, tg.wh, tg.wz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
+                            else detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
+                        } else if (tg.isTurret){                    // indestructible — sparks only
+                            sparkBurst(b.x, b.y, b.z, 5);
+                        } else if (tg.isPoly){                      // tumbling polyhedron: big blast
+                            tg.dead = true;
+                            detonate(b.tx, b.ty, b.tz, OCTA_MODEL, tg.rx, tg.ry, 0, 1.6, 4, tg.col);
+                        } else {                                    // transit
+                            tg.dead = true;
+                            detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
+                        }
                     }
                 }
                 if (hit){ FX.bolts.splice(i, 1); continue; }
