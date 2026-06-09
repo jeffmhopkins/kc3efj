@@ -1010,7 +1010,7 @@
             }
             const tg = tu.target;
             if (tg && !tg.dead){
-                const gg = Math.min(12, tu.z) * (0.35 + 0.65 * Math.min(1, (tu.z - 0.55) / 2.0));  // match render scale
+                const gg = Math.min(12, tu.z);                     // match render scale (constant on-screen size)
                 const apex = { x: tu.x, h: tu.h + 0.026 * gg, z: tu.z };  // barrel pivot atop the base
                 const gx = tg.slot ? tg.wx : tg.x;                 // aim at the ship's live position
                 const gh = tg.slot ? tg.wh : tg.h;
@@ -1647,8 +1647,8 @@
         if (FX.turret){
             const tu = FX.turret, OM = CONFIG.col.cap;
             const fade = Math.min(1, Math.max(0, (tu.z - 0.55) / 0.5));     // stay visible nearly to the bottom
-            // world size ~proportional to z (constant on-screen size), then shrink as it nears the bottom edge
-            const g = Math.min(12, tu.z) * (0.35 + 0.65 * Math.min(1, (tu.z - 0.55) / 2.0));
+            // world size ~proportional to z so the on-screen size stays small and CONSTANT the whole ride
+            const g = Math.min(12, tu.z);
             const sB = 0.018 * g, baseH = 0.026 * g, barrelLen = 0.05 * g;
             if (fade > 0.01){
                 const A = projectWorld(tu.x, tu.z, baseH, aspect);          // barrel pivot atop the base
