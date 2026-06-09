@@ -107,6 +107,7 @@
         capHP:         [5, 9],       // formation hits needed to destroy it
         capFireGap:    0.7,          // seconds between the capital's return-fire volleys
         capFireProb:   0.8,          // chance the capital actually fires on each beat
+        capSwitch:     2.5,          // seconds before the capital re-picks a tracked target
         capAccuracy:   0.065,        // chance a capital volley destroys the targeted fighter (normal target)
 
         // ── ground turret (rare; rides the grid, sprays everything except the capital) ──
@@ -824,8 +825,8 @@
             [0,1,2],[0,3,4],[0,1,3],[0,2,4],[9,10,11]],
         ENG: [[0.4,0,-1.6],[-0.4,0,-1.6],[0,0.05,-1.6]],
         LIGHTS: [1,2,3,4,5,6,7,8,9] };
-    // two dual-barrel turret hardpoints on the dorsal flanks (model-local; fire from both at once)
-    const CAP_HARDPOINTS = [[0.52, 0.20, 0.15], [-0.52, 0.20, 0.15]];
+    // two stubby dual-barrel turret hardpoints on the dorsal spine — one forward, one aft (track their target)
+    const CAP_HARDPOINTS = [[0, 0.30, 1.05], [0, 0.34, -0.95]];
 
     // low-poly light-car: sleek wedge, nose +z (travel), canopy ridge, wide low body
     const CAR_MODEL = {
@@ -1115,37 +1116,45 @@
             const uvy = (CONFIG.horizon + cam.pitchSend) - 0.20 / zc + h * inv;
             return z > 1.0 && uvx > 0.02 && uvx < 0.98 && uvy > 0.02 && uvy < 0.98;
         };
-        if (cap && !cap.dead && cap.onScreen && cap.backCool <= 0){
+        if (cap && !cap.dead && cap.onScreen){
             const pool = [];
             if (FX.squad){ const sq = FX.squad, t = sq.t;       // any squad member on stage, slotted or maneuvering
                 for (const sh of sq.ships) if (!sh.dead && sh.wx !== undefined && t >= sh.arriveAt && t < sh.departAt + sh.depDur && visOnScreen(sh.wx, sh.wz, sh.wh)) pool.push(sh); }
             for (const tr of FX.transits) if (!tr.dead && tr.z > 4 && visOnScreen(tr.x, tr.z, tr.h)) pool.push(tr);
             if (FX.car && !FX.car.dead && FX.car.z > 4 && visOnScreen(FX.car.x, FX.car.z, FX.car.h)) pool.push(FX.car);
-            if (pool.length){
-                cap.backCool = CONFIG.capFireGap;
-                if (Math.random() < CONFIG.capFireProb){
-                    const tgt = pool[Math.random() * pool.length | 0];
-                    const capSxy = CONFIG.shipScale * cap.scaleMul, capSz = capSxy * 0.6;
-                    const from = { x: cap.x, h: cap.h, z: cap.z - capSxy * 0.5 };
-                    let aim;
-                    if (tgt.slot) aim = { x: tgt.wx, h: tgt.wh, z: tgt.wz };   // live position (in slot or in transit)
-                    else aim = leadAim(from, tgt.x, tgt.h, tgt.z, tgt.ovx, tgt.ovy, tgt.ovz - gsB);
-                    // transform a model-local hardpoint to world (same roll(z)->pitch(x)->yaw(y) as the hull render)
-                    const cr = Math.cos(cap.roll), sr = Math.sin(cap.roll);
-                    const cp = Math.cos(cap.pitch || 0), sp = Math.sin(cap.pitch || 0);
-                    const cyw = Math.cos(cap.yaw), syw = Math.sin(cap.yaw);
-                    const hpWorld = v => {
-                        let x = v[0]*cr - v[1]*sr, y = v[0]*sr + v[1]*cr, z = v[2];
-                        const y2 = y*cp - z*sp; z = y*sp + z*cp; y = y2;
-                        const x2 = x*cyw + z*syw; z = -x*syw + z*cyw; x = x2;
-                        return { x: cap.x + x*capSxy, h: cap.h + y*capSxy, z: cap.z + z*capSz };
-                    };
-                    // both hardpoints fire at once → 4 bolts, each hardpoint a dual barrel ("pow-pow"); only one bolt stays decisive
-                    fireVolley(hpWorld(CAP_HARDPOINTS[0]), capSxy * 0.12, aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy, null, true,  0.05);
-                    fireVolley(hpWorld(CAP_HARDPOINTS[1]), capSxy * 0.12, aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy, null, false, 0.05);
-                }
+            // lock and TRACK a single target like the ground turret (re-pick every capSwitch, or when lost)
+            if (cap.switchCool > 0) cap.switchCool -= dt;
+            if (cap.switchCool <= 0 || !cap.target || cap.target.dead || pool.indexOf(cap.target) === -1){
+                cap.target = pool.length ? pool[Math.random() * pool.length | 0] : null;
+                cap.switchCool = CONFIG.capSwitch;
             }
-        }
+            const tgt = cap.target;
+            if (tgt){
+                const capSxy = CONFIG.shipScale * cap.scaleMul, capSz = capSxy * 0.6;
+                const from = { x: cap.x, h: cap.h, z: cap.z - capSxy * 0.5 };
+                const gx = tgt.slot ? tgt.wx : tgt.x, gh = tgt.slot ? tgt.wh : tgt.h, gz = tgt.slot ? tgt.wz : tgt.z;
+                const vx = tgt.slot ? 0 : tgt.ovx, vy = tgt.slot ? 0 : tgt.ovy, vz = tgt.slot ? 0 : tgt.ovz - gsB;
+                cap.aim = leadAim(from, gx, gh, gz, vx, vy, vz);   // both turrets track this lead point every frame
+                if (cap.backCool <= 0){                            // fire on cadence
+                    cap.backCool = CONFIG.capFireGap;
+                    if (Math.random() < CONFIG.capFireProb){
+                        // transform a model-local hardpoint to world (same roll(z)->pitch(x)->yaw(y) as the hull render)
+                        const cr = Math.cos(cap.roll), sr = Math.sin(cap.roll);
+                        const cp = Math.cos(cap.pitch || 0), sp = Math.sin(cap.pitch || 0);
+                        const cyw = Math.cos(cap.yaw), syw = Math.sin(cap.yaw);
+                        const hpWorld = v => {
+                            let x = v[0]*cr - v[1]*sr, y = v[0]*sr + v[1]*cr, z = v[2];
+                            const y2 = y*cp - z*sp; z = y*sp + z*cp; y = y2;
+                            const x2 = x*cyw + z*syw; z = -x*syw + z*cyw; x = x2;
+                            return { x: cap.x + x*capSxy, h: cap.h + y*capSxy, z: cap.z + z*capSz };
+                        };
+                        // both hardpoints fire at once → 4 bolts, each a dual barrel ("pow-pow"); only one bolt stays decisive
+                        fireVolley(hpWorld(CAP_HARDPOINTS[0]), capSxy * 0.10, cap.aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy, null, true,  0.05);
+                        fireVolley(hpWorld(CAP_HARDPOINTS[1]), capSxy * 0.10, cap.aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy, null, false, 0.05);
+                    }
+                }
+            } else cap.aim = null;
+        } else if (cap) cap.aim = null;   // off-screen / gone: barrels rest forward
 
         // ground turret: locks one target at a time (re-picks every 2s), tracks it, sprays fast + inaccurately
         if (FX.turret){
@@ -1341,7 +1350,8 @@
             yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
             pitch: -Math.asin(ovy / vmag), roll: -dir * rand(0.05, 0.16),
             scaleMul, lights: 0,
-            hp: Math.round(rand(CONFIG.capHP[0], CONFIG.capHP[1])), dead: false, fireCool: 0, backCool: 1.0, onScreen: false };
+            hp: Math.round(rand(CONFIG.capHP[0], CONFIG.capHP[1])), dead: false, fireCool: 0, backCool: 1.0, onScreen: false,
+            target: null, switchCool: 0, aim: null };
     }
 
     // spawn a detonation: hull shards + shrapnel + falling embers, scaled by `mag` (1 = fighter, big = capital)
@@ -1900,15 +1910,26 @@
                     const pp = P[M.LIGHTS[k]], bl = 0.5 + 0.5 * Math.sin(c.lights * 3 + k * 1.7), col = (k % 2) ? OM : CONFIG.col.orange;
                     pushPt((pp.x + 1) * 0.5, (1 - pp.y) * 0.5, (3 + 3 * bl) * dprNow, col[0]*bl*fade, col[1]*bl*fade, col[2]*bl*fade);
                 }
-                // two dual-barrel turret hardpoints on the dorsal flanks (the four bolts originate here)
-                const hpSep = 0.11, hpLen = 0.55;
+                // two stubby dual-barrel turrets (fore + aft) that TRACK the capital's target like the ground turret
+                const hpSepW = Sxy * 0.12, stub = Sxy * 0.30;   // short, fat barrels
+                const fwdW = rot([0, 0, 1]);                    // ship-forward (rest pose when no target)
                 for (const hp of CAP_HARDPOINTS){
-                    const mount = proj(hp);
-                    pushPt((mount.x + 1) * 0.5, (1 - mount.y) * 0.5, Math.min(11, mount.inv * Sxy * 80) * dprNow, OM[0]*1.1*fade, OM[1]*0.4*fade, OM[2]*0.4*fade);
+                    const r = rot(hp);
+                    const mx = c.x + r[0]*Sxy, mz = c.z + r[2]*Sz, mh = c.h + r[1]*Sxy;   // mount world pos
+                    const mP = projectWorld(mx, mz, mh, aspect);
+                    pushPt((mP.x + 1) * 0.5, (1 - mP.y) * 0.5, Math.min(13, mP.inv * Sxy * 95) * dprNow, OM[0]*1.2*fade, OM[1]*0.4*fade, OM[2]*0.4*fade);
+                    // aim direction: toward the tracked lead point, else rest forward
+                    let dx, dy, dz;
+                    if (c.aim){ dx = c.aim.x - mx; dy = c.aim.h - mh; dz = c.aim.z - mz; }
+                    else { dx = fwdW[0]; dy = fwdW[1]; dz = fwdW[2]; }
+                    const dl = Math.hypot(dx, dy, dz) || 1; dx /= dl; dy /= dl; dz /= dl;
+                    let px = -dz, pz = dx; const pl = Math.hypot(px, pz) || 1; px /= pl; pz /= pl;   // twin-barrel offset (horizontal)
                     for (const sgn of [-1, 1]){
-                        const A = proj([hp[0] + sgn*hpSep, hp[1], hp[2]]);
-                        const B = proj([hp[0] + sgn*hpSep, hp[1] + 0.05, hp[2] + hpLen]);   // barrel points forward + slightly up
-                        pushLineClip(A.x, A.y, B.x, B.y, 0.85 * fade, OM);
+                        const bx = mx + px*sgn*hpSepW, bz = mz + pz*sgn*hpSepW;
+                        const A = projectWorld(bx, bz, mh, aspect);
+                        const B = projectWorld(bx + dx*stub, bz + dz*stub, mh + dy*stub, aspect);
+                        pushLineClip(A.x, A.y, B.x, B.y, 1.0 * fade, OM);   // stubby barrel toward the aim
+                        pushPt((B.x + 1) * 0.5, (1 - B.y) * 0.5, Math.min(8, B.inv * Sxy * 55) * dprNow, OM[0]*1.3*fade, OM[1]*0.4*fade, OM[2]*0.4*fade);
                     }
                 }
                 // big, long exhaust jets — true-3D plume extending back along the world heading
