@@ -855,9 +855,11 @@
             }
         }
 
-        // sporadic distant ships transiting side-to-side (ambient; runs independently)
+        // sporadic distant ships transiting side-to-side (ambient; runs independently).
+        // while a capital ship is visible the sky gets busier: twice the spawn rate, more on-screen at once.
+        const capVis = !!(FX.capital && FX.capital.onScreen);
         FX.nextTransit -= dt;
-        if (FX.nextTransit <= 0 && FX.transits.length < 2){
+        if (FX.nextTransit <= 0 && FX.transits.length < (capVis ? 4 : 2)){
             const dir = Math.random() < 0.5 ? 1 : -1, z = rand(12, 22);
             const span = z * 0.6 * (sw / sh) * 0.85;
             // own heading varies off pure tangent: angle from +z (forward), ~90deg +/- up to ~50deg
@@ -877,7 +879,7 @@
                 pitch: -Math.asin(ovy / vmag),                  // nose + jet aligned to true heading
                 plume: rand(0.5, 1.7),                          // varied jet plume strength
                 model: Math.random() * SHIP_MODELS.length | 0, scaleMul: rand(1.3, 2.1) });
-            FX.nextTransit = rand(CONFIG.transitGap[0], CONFIG.transitGap[1]);
+            FX.nextTransit = rand(CONFIG.transitGap[0], CONFIG.transitGap[1]) * (capVis ? 0.5 : 1);
         }
         const aspT = sw / sh;
         for (let i = FX.transits.length - 1; i >= 0; i--){
@@ -891,8 +893,10 @@
 
         // ── space battle: formation snipes crossing craft; the capital ship fires back ──
         const CY = CONFIG.col.cyan, CAPC = CONFIG.col.cap;
+        const gsB = reduced ? 0 : CONFIG.gridScroll, aspB = sw / sh;
+        const cap = FX.capital;
         if (FX.squad){
-            const sq = FX.squad, t = sq.t, gs = reduced ? 0 : CONFIG.gridScroll, aspB = sw / sh;
+            const sq = FX.squad, t = sq.t;
             const holding = sh => !sh.dead && t >= sh.arriveAt + sh.arrDur && t < sh.departAt;  // alive, formed up
             const cosCone = Math.cos(CONFIG.blastCone);
             const slotPos = sh => { const s = sh.slot; return { x: sq.xw0 + s.dxw, z: sq.baseZ + s.dz, h: CONFIG.shipHeight + s.dh }; };
@@ -910,21 +914,6 @@
                 }
                 return { best, seen };
             };
-            // twin tracers from `from` (muzzle origin {x,h,z}) to a lead intercept of a moving target
-            const fireVolley = (from, muzOff, tgt, tvx, tvy, tvz, target, kind, col) => {
-                let T = 0.3;
-                for (let k = 0; k < 3; k++){
-                    const px = tgt.x + tvx * T, py = tgt.h + tvy * T, pz = tgt.z + tvz * T;
-                    T = Math.hypot(px - from.x, py - from.h, pz - from.z) / CONFIG.boltSpeed;
-                }
-                const ax = tgt.x + tvx * T, ay = tgt.h + tvy * T, az = tgt.z + tvz * T;
-                let primary = true;
-                for (const sgn of [-1, 1]){
-                    FX.bolts.push({ x0: from.x + sgn * muzOff, y0: from.h, z0: from.z, x: from.x + sgn * muzOff, y: from.h, z: from.z,
-                        tx: ax, ty: ay, tz: az, T, age: 0, delay: CONFIG.blastReact, target, decisive: primary, kind, col });
-                    primary = false;
-                }
-            };
 
             // formation fires on transits — but only once each is at least 10% onto the screen
             for (const tr of FX.transits){
@@ -937,33 +926,38 @@
                 if (!tr.engaged || !best || tr.fireCool > 0) continue;
                 tr.fireCool = CONFIG.blastCooldown;
                 if (Math.random() >= CONFIG.blastFireProb) continue;
-                const Sxy = CONFIG.shipScale * best.sh.scaleMul;
-                fireVolley({ x: best.sx, h: best.shh, z: best.sz + Sxy * 1.3 }, Sxy * 0.45,
-                           tr, tr.ovx, tr.ovy, tr.ovz - gs, tr, 'ally', CY);
+                const Sxy = CONFIG.shipScale * best.sh.scaleMul, from = { x: best.sx, h: best.shh, z: best.sz + Sxy * 1.3 };
+                fireVolley(from, Sxy * 0.45, leadAim(from, tr.x, tr.h, tr.z, tr.ovx, tr.ovy, tr.ovz - gsB), tr, 'ally', CY);
             }
 
             // formation also fires on the capital ship (heavy target — takes many hits)
-            const cap = FX.capital;
             if (cap && !cap.dead){
                 const { best } = acquire(cap.x, cap.z, cap.h);
                 if (best && cap.fireCool <= 0){
                     cap.fireCool = CONFIG.blastCooldown;
                     if (Math.random() < CONFIG.blastFireProb){
-                        const Sxy = CONFIG.shipScale * best.sh.scaleMul;
-                        fireVolley({ x: best.sx, h: best.shh, z: best.sz + Sxy * 1.3 }, Sxy * 0.45,
-                                   cap, cap.ovx, cap.ovy, cap.ovz, cap, 'ally', CY);
+                        const Sxy = CONFIG.shipScale * best.sh.scaleMul, from = { x: best.sx, h: best.shh, z: best.sz + Sxy * 1.3 };
+                        fireVolley(from, Sxy * 0.45, leadAim(from, cap.x, cap.h, cap.z, cap.ovx, cap.ovy, cap.ovz), cap, 'ally', CY);
                     }
                 }
-                // capital RETURNS FIRE at a random holding fighter (can destroy it)
-                const live = sq.ships.filter(holding);
-                if (live.length && cap.backCool <= 0){
-                    cap.backCool = CONFIG.capFireGap;
-                    if (Math.random() < CONFIG.capFireProb){
-                        const ship = live[Math.random() * live.length | 0], sp = slotPos(ship);
-                        const capSxy = CONFIG.shipScale * cap.scaleMul;
-                        fireVolley({ x: cap.x, h: cap.h, z: cap.z - capSxy * 0.5 }, capSxy * 0.35,
-                                   sp, 0, 0, 0, ship, 'enemy', CAPC);
-                    }
+            }
+        }
+
+        // capital RETURNS FIRE — only while it is itself on-screen; targets fighters AND transits
+        if (cap && !cap.dead && cap.onScreen && cap.backCool <= 0){
+            const pool = [];
+            if (FX.squad){ const sq = FX.squad, t = sq.t;
+                for (const sh of sq.ships) if (!sh.dead && t >= sh.arriveAt + sh.arrDur && t < sh.departAt) pool.push(sh); }
+            for (const tr of FX.transits) if (!tr.dead && tr.z > 4) pool.push(tr);
+            if (pool.length){
+                cap.backCool = CONFIG.capFireGap;
+                if (Math.random() < CONFIG.capFireProb){
+                    const tgt = pool[Math.random() * pool.length | 0];
+                    const capSxy = CONFIG.shipScale * cap.scaleMul, from = { x: cap.x, h: cap.h, z: cap.z - capSxy * 0.5 };
+                    let aim;
+                    if (tgt.slot){ const s = tgt.slot; aim = { x: FX.squad.xw0 + s.dxw, h: CONFIG.shipHeight + s.dh, z: FX.squad.baseZ + s.dz }; }
+                    else aim = leadAim(from, tgt.x, tgt.h, tgt.z, tgt.ovx, tgt.ovy, tgt.ovz - gsB);
+                    fireVolley(from, capSxy * 0.35, aim, tgt, 'enemy', CAPC);
                 }
             }
         }
@@ -977,10 +971,11 @@
             if (u >= 1){
                 const tg = b.target;
                 if (b.decisive && tg && !tg.dead){
-                    if (b.kind === 'enemy'){                         // capital -> fighter
+                    if (b.kind === 'enemy'){                         // capital -> fighter or transit
                         if (Math.random() < CONFIG.capAccuracy){
                             tg.dead = true;
-                            detonate(b.tx, b.ty, b.tz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
+                            if (tg.slot) detonate(b.tx, b.ty, b.tz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
+                            else detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
                         }
                     } else if (tg.cap){                             // formation -> capital (chip away at HP)
                         if (Math.random() < CONFIG.capHitChance){
@@ -1041,6 +1036,7 @@
             if (c.fireCool > 0) c.fireCool -= dt;
             if (c.backCool > 0) c.backCool -= dt;
             const inv = 1 / (Math.max(0.5, c.z) * 0.6), uvx = 0.5 + cam.headSend + c.x * inv / (sw / sh);
+            c.onScreen = uvx > 0.03 && uvx < 0.97;              // gate its fire to when the user can see it
             if (uvx < -0.9 || uvx > 1.9){ FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]); }
         }
 
@@ -1071,7 +1067,7 @@
             yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
             pitch: -Math.asin(ovy / vmag), roll: -dir * rand(0.05, 0.16),
             scaleMul: rand(5.0, 8.0), lights: 0,
-            hp: Math.round(rand(CONFIG.capHP[0], CONFIG.capHP[1])), dead: false, fireCool: 0, backCool: 1.0 };
+            hp: Math.round(rand(CONFIG.capHP[0], CONFIG.capHP[1])), dead: false, fireCool: 0, backCool: 1.0, onScreen: false };
     }
 
     // spawn a detonation: hull shards + shrapnel + falling embers, scaled by `mag` (1 = fighter, big = capital)
@@ -1096,6 +1092,27 @@
             const th = Math.random() * 6.2832, cphi = 2 * Math.random() - 1, sphi = Math.sqrt(1 - cphi * cphi);
             const spd = rand(1.0, 2.8), lifeT = rand(0.5, 1.1);
             FX.embers.push({ x, y, z, vx: sphi*Math.cos(th)*spd, vy: cphi*spd*0.5 + rand(0.2,0.6), vz: sphi*Math.sin(th)*spd, life: lifeT, max: lifeT });
+        }
+    }
+
+    // lead-prediction intercept point ({x,h,z}) for a target moving at (vx,vy,vz) from a muzzle `from`
+    function leadAim(from, tx, ty, tz, vx, vy, vz){
+        let T = 0.3;
+        for (let k = 0; k < 3; k++){
+            const px = tx + vx*T, py = ty + vy*T, pz = tz + vz*T;
+            T = Math.hypot(px - from.x, py - from.h, pz - from.z) / CONFIG.boltSpeed;
+        }
+        return { x: tx + vx*T, h: ty + vy*T, z: tz + vz*T };
+    }
+    // twin tracers from a muzzle `from` to an `aim` point; only the first rolls the kill at impact
+    function fireVolley(from, muzOff, aim, target, kind, col){
+        const T = Math.max(0.05, Math.hypot(aim.x - from.x, aim.h - from.h, aim.z - from.z) / CONFIG.boltSpeed);
+        let primary = true;
+        for (const sgn of [-1, 1]){
+            const ox = from.x + sgn * muzOff;
+            FX.bolts.push({ x0: ox, y0: from.h, z0: from.z, x: ox, y: from.h, z: from.z,
+                tx: aim.x, ty: aim.h, tz: aim.z, T, age: 0, delay: CONFIG.blastReact, target, decisive: primary, kind, col });
+            primary = false;
         }
     }
 
