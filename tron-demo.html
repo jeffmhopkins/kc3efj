@@ -613,7 +613,7 @@
                 const dx = n.x - mouse.x, dy = n.y - mouse.y;
                 const d = Math.hypot(dx, dy);
                 if (d < CONFIG.mouseRepel && d > 1e-4){
-                    const f = (1 - d / CONFIG.mouseRepel) * 0.10;
+                    const f = (1 - d / CONFIG.mouseRepel) * 0.025;   // 1/4 of the previous repel strength
                     n.vx += (dx / d) * f * dt * 60;
                     n.vy += (dy / d) * f * dt * 60;
                 }
@@ -1002,7 +1002,7 @@
                 targets.push({ obj: cap, ax: cap.x, ah: cap.h, az: cap.z, vx: cap.ovx, vy: cap.ovy, vz: cap.ovz, acc: CONFIG.capHitChance });
             if (FX.turret && onScr(FX.turret.x, FX.turret.z, FX.turret.h).on){
                 const tu = FX.turret;
-                targets.push({ obj: tu, ax: tu.x, ah: tu.h, az: tu.z, vx: 0, vy: 0, vz: -gsB, acc: CONFIG.boltAccuracy });
+                targets.push({ obj: tu, ax: tu.x, ah: tu.h + 0.013 * Math.min(12, tu.z) * 0.6, az: tu.z, vx: 0, vy: 0, vz: -gsB, acc: CONFIG.boltAccuracy });  // aim mid-panel, not the base
             }
             for (const p of FX.polys){                                // tumbling polyhedra (mapped from sky to world)
                 if (p.dead) continue;
@@ -1070,7 +1070,7 @@
                 const onScreen = tuvx > 0.02 && tuvx < 0.98 && tu.z > 0.7;   // never fire while off-screen
                 if (onScreen && tu.fireCool <= 0){
                     tu.fireCool = CONFIG.turretFireGap;
-                    fireVolley(apex, 0.05, tu.aim, tg, 'enemy', CAPC, CONFIG.turretAccuracy);
+                    fireVolley(apex, 0.009 * gg * 0.5, tu.aim, tg, 'enemy', CAPC, CONFIG.turretAccuracy);   // twin bolts from the two barrels
                 }
             }
         }
@@ -1754,10 +1754,16 @@
                     pushLineClip(c0.x, c0.y, c1.x, c1.y, 0.7 * fade, OM);   // base ring on the grid
                     pushLineClip(c0.x, c0.y, A.x, A.y, 0.55 * fade, OM);   // spokes up to the pivot
                 }
-                const dx = tu.aim.x - tu.x, dy = tu.aim.h - baseH, dz = tu.aim.z - tu.z, dl = Math.hypot(dx, dy, dz) || 1;
-                const B = projectWorld(tu.x + dx/dl*barrelLen, tu.z + dz/dl*barrelLen, baseH + dy/dl*barrelLen, aspect);
-                pushLineClip(A.x, A.y, B.x, B.y, 1.0 * fade, OM);          // barrel toward the aim
-                pushPt((B.x + 1) * 0.5, (1 - B.y) * 0.5, Math.min(11, B.inv * 22) * dprNow, OM[0]*1.3*fade, OM[1]*0.4*fade, OM[2]*0.4*fade);
+                // double barrel: two guns offset to either side, both tracking the aim; shots come from these
+                const sep = sB * 0.5;
+                for (const sgn of [-1, 1]){
+                    const bx0 = tu.x + sgn * sep;
+                    const Ab = projectWorld(bx0, tu.z, baseH, aspect);     // this barrel's pivot
+                    const dx = tu.aim.x - bx0, dy = tu.aim.h - baseH, dz = tu.aim.z - tu.z, dl = Math.hypot(dx, dy, dz) || 1;
+                    const B = projectWorld(bx0 + dx/dl*barrelLen, tu.z + dz/dl*barrelLen, baseH + dy/dl*barrelLen, aspect);
+                    pushLineClip(Ab.x, Ab.y, B.x, B.y, 1.0 * fade, OM);    // barrel toward the aim
+                    pushPt((B.x + 1) * 0.5, (1 - B.y) * 0.5, Math.min(9, B.inv * 16) * dprNow, OM[0]*1.3*fade, OM[1]*0.4*fade, OM[2]*0.4*fade);
+                }
             }
         }
 
