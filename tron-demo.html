@@ -822,6 +822,8 @@
             [0,1,2],[0,3,4],[0,1,3],[0,2,4],[9,10,11]],
         ENG: [[0.4,0,-1.6],[-0.4,0,-1.6],[0,0.05,-1.6]],
         LIGHTS: [1,2,3,4,5,6,7,8,9] };
+    // two dual-barrel turret hardpoints on the dorsal flanks (model-local; fire from both at once)
+    const CAP_HARDPOINTS = [[0.52, 0.20, 0.15], [-0.52, 0.20, 0.15]];
 
     // low-poly light-car: sleek wedge, nose +z (travel), canopy ridge, wide low body
     const CAR_MODEL = {
@@ -1121,11 +1123,24 @@
                 cap.backCool = CONFIG.capFireGap;
                 if (Math.random() < CONFIG.capFireProb){
                     const tgt = pool[Math.random() * pool.length | 0];
-                    const capSxy = CONFIG.shipScale * cap.scaleMul, from = { x: cap.x, h: cap.h, z: cap.z - capSxy * 0.5 };
+                    const capSxy = CONFIG.shipScale * cap.scaleMul, capSz = capSxy * 0.6;
+                    const from = { x: cap.x, h: cap.h, z: cap.z - capSxy * 0.5 };
                     let aim;
                     if (tgt.slot) aim = { x: tgt.wx, h: tgt.wh, z: tgt.wz };   // live position (in slot or in transit)
                     else aim = leadAim(from, tgt.x, tgt.h, tgt.z, tgt.ovx, tgt.ovy, tgt.ovz - gsB);
-                    fireVolley(from, capSxy * 0.35, aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy);
+                    // transform a model-local hardpoint to world (same roll(z)->pitch(x)->yaw(y) as the hull render)
+                    const cr = Math.cos(cap.roll), sr = Math.sin(cap.roll);
+                    const cp = Math.cos(cap.pitch || 0), sp = Math.sin(cap.pitch || 0);
+                    const cyw = Math.cos(cap.yaw), syw = Math.sin(cap.yaw);
+                    const hpWorld = v => {
+                        let x = v[0]*cr - v[1]*sr, y = v[0]*sr + v[1]*cr, z = v[2];
+                        const y2 = y*cp - z*sp; z = y*sp + z*cp; y = y2;
+                        const x2 = x*cyw + z*syw; z = -x*syw + z*cyw; x = x2;
+                        return { x: cap.x + x*capSxy, h: cap.h + y*capSxy, z: cap.z + z*capSz };
+                    };
+                    // both hardpoints fire at once → 4 bolts, each hardpoint a dual barrel ("pow-pow"); only one bolt stays decisive
+                    fireVolley(hpWorld(CAP_HARDPOINTS[0]), capSxy * 0.12, aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy, null, true,  0.05);
+                    fireVolley(hpWorld(CAP_HARDPOINTS[1]), capSxy * 0.12, aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy, null, false, 0.05);
                 }
             }
         }
@@ -1362,14 +1377,15 @@
         return { x: tx + vx*T, h: ty + vy*T, z: tz + vz*T };
     }
     // twin tracers from a muzzle `from` to an `aim` point; only the first rolls the kill at impact (prob `acc`)
-    function fireVolley(from, muzOff, aim, target, kind, col, acc, shooter){
+    function fireVolley(from, muzOff, aim, target, kind, col, acc, shooter, firstDecisive = true, barrelStagger = 0){
         const T = Math.max(0.05, Math.hypot(aim.x - from.x, aim.h - from.h, aim.z - from.z) / CONFIG.boltSpeed);
-        let primary = true;
+        let primary = true, idx = 0;
         for (const sgn of [-1, 1]){
             const ox = from.x + sgn * muzOff;
             FX.bolts.push({ x0: ox, y0: from.h, z0: from.z, x: ox, y: from.h, z: from.z,
-                tx: aim.x, ty: aim.h, tz: aim.z, T, age: 0, delay: CONFIG.blastReact, target, decisive: primary, kind, col, acc, shooter: shooter || null });
-            primary = false;
+                tx: aim.x, ty: aim.h, tz: aim.z, T, age: 0, delay: CONFIG.blastReact + idx * barrelStagger,   // tiny stagger = "pow-pow"
+                target, decisive: firstDecisive && primary, kind, col, acc, shooter: shooter || null });
+            primary = false; idx++;
         }
     }
 
@@ -1867,6 +1883,17 @@
                 for (let k = 0; k < M.LIGHTS.length; k++){                                  // blinking running lights
                     const pp = P[M.LIGHTS[k]], bl = 0.5 + 0.5 * Math.sin(c.lights * 3 + k * 1.7), col = (k % 2) ? OM : CONFIG.col.orange;
                     pushPt((pp.x + 1) * 0.5, (1 - pp.y) * 0.5, (3 + 3 * bl) * dprNow, col[0]*bl*fade, col[1]*bl*fade, col[2]*bl*fade);
+                }
+                // two dual-barrel turret hardpoints on the dorsal flanks (the four bolts originate here)
+                const hpSep = 0.11, hpLen = 0.55;
+                for (const hp of CAP_HARDPOINTS){
+                    const mount = proj(hp);
+                    pushPt((mount.x + 1) * 0.5, (1 - mount.y) * 0.5, Math.min(11, mount.inv * Sxy * 80) * dprNow, OM[0]*1.1*fade, OM[1]*0.4*fade, OM[2]*0.4*fade);
+                    for (const sgn of [-1, 1]){
+                        const A = proj([hp[0] + sgn*hpSep, hp[1], hp[2]]);
+                        const B = proj([hp[0] + sgn*hpSep, hp[1] + 0.05, hp[2] + hpLen]);   // barrel points forward + slightly up
+                        pushLineClip(A.x, A.y, B.x, B.y, 0.85 * fade, OM);
+                    }
                 }
                 // big, long exhaust jets — true-3D plume extending back along the world heading
                 const fwd = rot([0, 0, 1]), TR = 18, segL = 0.16, segZ = 0.20;
