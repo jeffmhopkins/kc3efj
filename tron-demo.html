@@ -1526,7 +1526,7 @@
         // distant transit ships (nose along their own heading; fade out as they pass near)
         for (const tr of FX.transits){
             if (tr.dead) continue;                              // destroyed this frame — the blast stands in for it
-            const fade = 0.55 * Math.min(1, (tr.z - 2.5) / 2.5);
+            const fade = 0.95 * Math.min(1, (tr.z - 2.5) / 2.5);   // brighter so they read against the sky
             if (fade <= 0.01) continue;
             drawShip(tr.x, tr.z, tr.h, tr.roll, tr.yaw, tr.pitch, tr.scaleMul, CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model], tr.plume);
         }
