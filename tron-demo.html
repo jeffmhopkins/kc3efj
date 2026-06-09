@@ -806,7 +806,12 @@
     }
 
     function makeTurret(){
-        const z = rand(9, 16), x = rand(-0.42, 0.42) * z * 0.6 * (sw / sh);   // somewhere across the grid
+        const z = rand(9, 16), aspT = sw / sh;
+        // keep it on-screen the whole ride: the grid spreads x outward as z shrinks, so bound the
+        // world-x by the spread at the near (despawn) end, against the off-centre vanishing point.
+        const maxOff = Math.max(0.12, 0.40 - Math.abs(cam.headSend));
+        const xMax = maxOff * aspT * 1.0 * 0.6;
+        const x = rand(-1, 1) * xMax;
         return { x, z, h: 0, target: null, switchCool: 0, fireCool: CONFIG.turretFireGap, aim: { x, h: 0.2, z: z + 1 } };
     }
 
@@ -995,7 +1000,9 @@
                 const gz = tg.slot ? (FX.squad.baseZ + tg.slot.dz) : tg.z;
                 const vx = tg.slot ? 0 : tg.ovx, vy = tg.slot ? 0 : tg.ovy, vz = tg.slot ? 0 : tg.ovz - gsB;
                 tu.aim = leadAim(apex, gx, gh, gz, vx, vy, vz);     // barrel tracks the lead point
-                if (tu.fireCool <= 0){
+                const tinv = 1 / (Math.max(0.5, tu.z) * 0.6), tuvx = 0.5 + cam.headSend + tu.x * tinv / aspB;
+                const onScreen = tuvx > 0.02 && tuvx < 0.98 && tu.z > 1.2;   // never fire while off-screen
+                if (onScreen && tu.fireCool <= 0){
                     tu.fireCool = CONFIG.turretFireGap;
                     fireVolley(apex, 0.05, tu.aim, tg, 'enemy', CAPC, CONFIG.turretAccuracy);
                 }
@@ -1107,7 +1114,7 @@
         // same randomized-trajectory recipe as the transit ships (heading deviation + slight climb)
         const dir = Math.random() < 0.5 ? 1 : -1, z = rand(16, 28);
         const span = z * 0.6 * (sw / sh) * 1.2;
-        const sp = rand(0.5, 1.1), dev = rand(-0.3, 0.3);
+        const sp = rand(0.25, 0.55), dev = rand(-0.3, 0.3);           // 50% of the old cruise speed
         const ang = (dir > 0 ? Math.PI / 2 : -Math.PI / 2) - dir * dev;
         const ovx = Math.sin(ang) * sp, ovz = Math.cos(ang) * sp * 0.3;
         const theta = rand(-8, 12) * Math.PI / 180;                   // gentle climb/descent
