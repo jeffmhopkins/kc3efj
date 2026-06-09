@@ -242,7 +242,9 @@
             col  = vec3(0.03, 0.006, 0.07);                      // floor/terrain base
             col += gcol * line * fade * 1.35;
             col += gcol * hH * 0.06 * fade;                      // faint height tint so peaks read
-            fragColor = vec4(col, 1.0);
+            // depth alpha: near terrain is solid (occludes); the far ridges fade out into the sky
+            float tA = smoothstep(46.0, 22.0, hZ);
+            fragColor = vec4(col, tA);
             return;
         }
 
@@ -1869,15 +1871,16 @@
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         drawQuad();
 
-        // TERRAIN pass: opaque, drawn AFTER the sky/network/ridge/sun so the mountains occlude all of them
-        gl.disable(gl.BLEND);
+        // TERRAIN pass: drawn AFTER sky/network/ridge/sun so it occludes them. Alpha-blended so NEAR terrain
+        // is solid (occludes) while the FAR ridges fade out into the sky (depth alpha from the shader).
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.uniform1f(GL.sceneU.uSunOnly, 0.0);
         gl.uniform1f(GL.sceneU.uTerrainPass, 1.0);
         drawQuad();
         gl.uniform1f(GL.sceneU.uTerrainPass, 0.0);
 
         // foreground cameos in front of the terrain: hull fills MULTIPLY (silhouette the sun), edges/glows add
-        gl.enable(gl.BLEND);
         gl.blendFunc(gl.ONE, gl.ONE);
         drawFX(buildFX(timeSec, false), true);
         gl.disable(gl.BLEND);
