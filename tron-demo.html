@@ -1161,7 +1161,7 @@
             const pool = [];
             if (FX.squad){ const sq = FX.squad, t = sq.t;       // any squad member on stage, slotted or maneuvering
                 for (const sh of sq.ships) if (!sh.dead && sh.wx !== undefined && t >= sh.arriveAt && t < sh.departAt + sh.depDur && visOnScreen(sh.wx, sh.wz, sh.wh)) pool.push(sh); }
-            for (const tr of FX.transits) if (!tr.dead && tr.z > 4 && visOnScreen(tr.x, tr.z, tr.h)) pool.push(tr);
+            for (const tr of FX.transits) if (!tr.dead && !tr.foe && tr.z > 4 && visOnScreen(tr.x, tr.z, tr.h)) pool.push(tr);   // never the ominous red foes (same side)
             if (FX.car && !FX.car.dead && FX.car.z > 4 && visOnScreen(FX.car.x, FX.car.z, FX.car.h)) pool.push(FX.car);
             // lock and TRACK a single target like the ground turret (re-pick every capSwitch, or when lost)
             if (cap.switchCool > 0) cap.switchCool -= dt;
