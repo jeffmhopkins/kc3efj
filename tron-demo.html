@@ -63,15 +63,15 @@
         gridScroll:    0.225,     // synthwave floor scroll speed (half of the original)
         horizon:       0.40,      // 0..1 from bottom (=> ~60% from top)
 
-        nodeCount:     90,        // network nodes (mid laptop comfortable)
-        nodeCountMob:  55,
+        nodeCount:     104,       // network nodes (a few extra to keep density now the band runs off-screen)
+        nodeCountMob:  64,
         linkDist:      0.17,      // link threshold, fraction of min dimension
-        nodeSpeed:     0.002,     // idle drift speed (normalized units/sec) — very slow; the mouse can fling them faster
+        nodeSpeed:     0.004,     // idle drift speed (normalized units/sec) — slow; the mouse can fling them faster
         nodeFleeMax:   0.090,     // max speed while fleeing the mouse
         mouseRepel:    0.12,      // repel radius (normalized)
 
-        bandY:         [0.08, 0.55], // node field band — kept above the horizon (~0.60 y-down)
-        bandX:         [0.06, 0.94],
+        bandY:         [-0.04, 0.55], // node field band — extends past the top edge; bottom kept above the horizon
+        bandX:         [-0.06, 1.06], // extends past the L/R edges so nodes + links reach the screen edge (no margin gap)
 
         pulseEvery:    [1.4, 3.0],   // seconds between new signal pulses
         pulseSpeed:    1.9,          // 1/seconds along an edge
@@ -1321,7 +1321,7 @@
         // --- distant ridge (taller, glowing mountain mass + bright ridgeline) ---
         if (FX.ridge && FX.ridgeAmt > 0.01){
             const R = FX.ridge, SEG = R.pts.length - 1, base = R.scroll + cam.headSend * 0.04;
-            const c = CONFIG.col.purple, amt = FX.ridgeAmt, b = 0.85 * amt, fb = 0.34 * amt;
+            const c = CONFIG.col.purple, amt = FX.ridgeAmt, b = 0.34 * amt, fb = 0.34 * amt;   // crest line back to original alpha
             const hz = (1 - CONFIG.horizon) - cam.pitchSend;     // horizon line (y-down)
             for (let i = 0; i < SEG; i++){
                 let x0 = (i / SEG) * R.span - base, x1 = ((i + 1) / SEG) * R.span - base;
