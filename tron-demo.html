@@ -164,6 +164,11 @@
     const reduced = false;
     const isMobile = window.innerWidth <= 768 || 'ontouchstart' in window;
 
+    // single far-field cull distance for every deep cameo (transits, bolts, embers), plus a short
+    // fade band so things fade out over the last few units of depth instead of popping at the edge.
+    const FAR_Z = 130, FAR_FADE = 12;
+    const farFade = z => Math.max(0, Math.min(1, (FAR_Z - z) / FAR_FADE));
+
     // ──────────────────────────────────────────────────────────────
     //  Shader sources
     // ──────────────────────────────────────────────────────────────
@@ -993,7 +998,7 @@
         return { x, z, h: 0, isTurret: true, target: null, switchCool: 0, fireCool: CONFIG.turretFireGap, shotCool: 0, aim: { x, h: 0.2, z: z + 1 } };
     }
 
-    function updateFX(dt, tSec){
+    function updateFX(dt){
         if (reduced) return;
         const side = () => Math.random() < 0.5;
 
@@ -1075,7 +1080,7 @@
             const zc = Math.max(0.5, tr.z), inv = 1 / (zc * 0.6);
             const uvx = 0.5 + cam.headSend + tr.x * inv / aspT;
             const uvy = (CONFIG.horizon + cam.pitchSend) - 0.20 / zc + tr.h * inv;   // y-up
-            if (tr.dead || tr.z < 1.0 || tr.z > 120 || uvx < -0.4 || uvx > 1.4 || uvy > 1.35) FX.transits.splice(i, 1);
+            if (tr.dead || tr.z < 1.0 || tr.z > FAR_Z || uvx < -0.4 || uvx > 1.4 || uvy > 1.35) FX.transits.splice(i, 1);
         }
 
         // ── space battle: formation snipes crossing craft; the capital ship fires back ──
@@ -1258,11 +1263,6 @@
             b.age += dt;
             const u = b.T > 1e-3 ? b.age / b.T : 1;
             b.x = b.x0 + (b.tx - b.x0) * u; b.y = b.y0 + (b.ty - b.y0) * u; b.z = b.z0 + (b.tz - b.z0) * u;
-            // collide with the grid floor / side mountains — a bolt that dips below the surface stops there
-            if (b.z > 0.5){
-                const th = terrainH(b.x, b.z, tSec);
-                if (b.y <= th - 0.004){ sparkBurst(b.x, th, b.z, 5); FX.bolts.splice(i, 1); continue; }
-            }
             if (u >= 1 && !b.resolved){
                 b.resolved = true;
                 const tg = b.target;
@@ -1318,7 +1318,7 @@
                 if (Math.random() < 0.3333){ sparkBurst(b.x, b.y, b.z, 5); FX.bolts.splice(i, 1); continue; }
                 // else keep flying (resolved prevents another roll); culled below when it leaves the field
             }
-            if (b.z < 0.4 || b.z > 125) FX.bolts.splice(i, 1);   // reach the far (deep) transits before culling
+            if (b.z < 0.4 || b.z > FAR_Z) FX.bolts.splice(i, 1);   // shared far-field cull (reaches the deep transits)
         }
         for (let i = FX.blasts.length - 1; i >= 0; i--){ const bl = FX.blasts[i];
             bl.age += dt; if (bl.age >= bl.dur) FX.blasts.splice(i, 1); }
@@ -1391,7 +1391,7 @@
             e.vy -= GRAV * dt;
             e.x += e.vx * dt; e.z += (e.vz - gs2) * dt; e.y += e.vy * dt; e.life -= dt;
             if (e.y <= 0){ FX.groundSparks.push({ x: e.x, z: e.z, age: 0, dur: rand(0.35, 0.6) }); FX.embers.splice(i, 1); }
-            else if (e.life <= 0 || e.z < 0.3 || e.z > 130) FX.embers.splice(i, 1);   // low near-cull (squad deaths spark floor); far enough for deep kills
+            else if (e.life <= 0 || e.z < 0.3 || e.z > FAR_Z) FX.embers.splice(i, 1);   // low near-cull (squad deaths spark floor); shared far cull
         }
         if (FX.embers.length > 150) FX.embers.splice(0, FX.embers.length - 150);
         for (let i = FX.groundSparks.length - 1; i >= 0; i--){ const g = FX.groundSparks[i];
@@ -1443,29 +1443,6 @@
             const spd = rand(1.0, 2.8), lifeT = rand(0.5, 1.1);
             FX.embers.push({ x, y, z, vx: sphi*Math.cos(th)*spd, vy: cphi*spd*0.5 + rand(0.2,0.6), vz: sphi*Math.sin(th)*spd, life: lifeT, max: lifeT });
         }
-    }
-
-    // JS port of the shader's FS_SCENE terrain (hash/vnoise/terrH) so bolts can collide with the
-    // grid floor (flat valley => 0) and the jagged side mountains. Returns world height at (x, z).
-    function thash(x, y){ const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
-    function tvnoise(x, y){
-        const ix = Math.floor(x), iy = Math.floor(y);
-        let fx = x - ix, fy = y - iy;
-        fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
-        const a = thash(ix, iy), b = thash(ix + 1, iy), c = thash(ix, iy + 1), d = thash(ix + 1, iy + 1);
-        const m0 = a + (b - a) * fx, m1 = c + (d - c) * fx;
-        return m0 + (m1 - m0) * fy;
-    }
-    function terrainH(x, z, tSec){
-        const ax = Math.abs(x);
-        let s = (ax - 2.3) / 4.7; s = s < 0 ? 0 : s > 1 ? 1 : s;   // smoothstep(2.3, 7.0, ax)
-        const side = s * s * (3 - 2 * s);
-        if (side <= 0.001) return 0;
-        const yw = z + tSec * (reduced ? 0 : CONFIG.gridScroll);
-        const n = tvnoise(ax * 0.45, yw * 0.40) * 0.6
-                + tvnoise(ax * 1.10, yw * 0.95) * 0.28
-                + tvnoise(ax * 2.60, yw * 2.20) * 0.12;
-        return side * n * (0.7 + ax * 0.18);
     }
 
     // lead-prediction intercept point ({x,h,z}) for a target moving at (vx,vy,vz) from a muzzle `from`
@@ -1858,7 +1835,7 @@
         // distant transit ships (nose along their own heading; fade out as they pass near)
         for (const tr of FX.transits){
             if (tr.dead) continue;                              // destroyed this frame — the blast stands in for it
-            const fade = 0.95 * Math.min(1, (tr.z - 1.0) / 1.5);   // fade only when very close, so they can pass nearer
+            const fade = 0.95 * Math.min(1, (tr.z - 1.0) / 1.5) * farFade(tr.z);   // near fade-in + a quick fade-out before the far cull
             if (fade <= 0.01) continue;
             drawShip(tr.x, tr.z, tr.h, tr.roll, tr.yaw, tr.pitch, tr.scaleMul, tr.foe ? CONFIG.col.cap : CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model], tr.plume);
         }
@@ -1874,6 +1851,7 @@
             if (b.delay > 0) continue;                          // still in the lock-on beat
             if (b.z < 0.35) continue;
             const bc = b.col || HOT;
+            const ff = farFade(b.z);                            // quick fade-out before the far cull
             const C = projectWorld(b.x, b.z, b.y, aspect);
             const dx = b.tx - b.x0, dy = b.ty - b.y0, dz = b.tz - b.z0, dl = Math.hypot(dx, dy, dz) || 1;
             const ux = dx / dl, uy = dy / dl, uz = dz / dl;
@@ -1884,10 +1862,10 @@
             if (uz > 0) tl = Math.min(tl, Math.max(0, (b.z - 0.6) / uz));
             if (tl > 0.01){
                 const Tt = projectWorld(b.x - ux * tl, b.z - uz * tl, b.y - uy * tl, aspect);
-                pushLineClip(Tt.x, Tt.y, C.x, C.y, 1.1, bc);
+                pushLineClip(Tt.x, Tt.y, C.x, C.y, 1.1 * ff, bc);
             }
             pushPt((C.x + 1) * 0.5, (1 - C.y) * 0.5, Math.min(15, C.inv * 34) * dprNow,
-                   bc[0] * 1.5, bc[1] * 1.5, bc[2] * 1.5);
+                   bc[0] * 1.5 * ff, bc[1] * 1.5 * ff, bc[2] * 1.5 * ff);
             if (b.missile){                                     // unmistakable special attack: throbbing warhead + halo + long contrail
                 const cnx = (C.x + 1) * 0.5, cny = (1 - C.y) * 0.5;
                 const pulse = 0.7 + 0.3 * Math.sin(b.age * 26);
@@ -2258,7 +2236,7 @@
         lastSim = now;
         const tSec = (now - start) / 1000;
         updateSim(dt);
-        updateFX(dt, tSec);
+        updateFX(dt);
         render(tSec);
     }
 
