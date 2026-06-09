@@ -196,8 +196,9 @@
         float side = smoothstep(2.3, 7.0, ax);
         if (side <= 0.001) return 0.0;
         float yw = z + uTime * uScroll;
-        float n = vnoise(vec2(ax*0.34, yw*0.30))*0.66       // larger, slower-scrolling features
-                + vnoise(vec2(ax*0.85, yw*0.72))*0.30;      // (dropped the fast high-freq octave)
+        float n = vnoise(vec2(ax*0.45, yw*0.40))*0.6
+                + vnoise(vec2(ax*1.10, yw*0.95))*0.28
+                + vnoise(vec2(ax*2.60, yw*2.20))*0.12;
         return side * n * (0.7 + ax * 0.18);
     }
 
