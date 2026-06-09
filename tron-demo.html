@@ -821,7 +821,7 @@
         // keep it on-screen the whole ride: the grid spreads x outward as z shrinks, so bound the
         // world-x by the spread at the near (despawn) end, against the off-centre vanishing point.
         const maxOff = Math.max(0.12, 0.40 - Math.abs(cam.headSend));
-        const xMax = maxOff * aspT * 1.0 * 0.6;
+        const xMax = maxOff * aspT * 1.0 * 0.6 * 2;   // doubled spawn x-width (may exit a side before the bottom)
         const x = rand(-1, 1) * xMax;
         return { x, z, h: 0, isTurret: true, target: null, switchCool: 0, fireCool: CONFIG.turretFireGap, shotCool: 0, aim: { x, h: 0.2, z: z + 1 } };
     }
