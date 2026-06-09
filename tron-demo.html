@@ -1456,7 +1456,7 @@
             // (the sun -> silhouette) but barely touches the dark sky; the bright wireframe edges draw on top.
             if (M.F && CONFIG.shipFill > 0){
                 for (const [a, b, c2] of M.F){
-                    const op = Math.min(0.8, CONFIG.shipFill * 2.13 * fade * (nf(P[a].wz) + nf(P[b].wz) + nf(P[c2].wz)) / 3);
+                    const op = Math.min(0.4, CONFIG.shipFill * 1.07 * fade * (nf(P[a].wz) + nf(P[b].wz) + nf(P[c2].wz)) / 3);
                     pushTriClip(P[a].x, P[a].y, P[b].x, P[b].y, P[c2].x, P[c2].y, Math.sqrt(1 - op), WHITE);
                 }
             }
@@ -1639,7 +1639,7 @@
             const fade = Math.min(1, Math.max(0, Math.min(ux + 0.35, 1.35 - ux) / 0.3));   // ease on/off at the sides
             if (fade > 0.01){
                 const P = M.V.map(proj);
-                const cop = Math.min(0.8, CONFIG.shipFill * 0.85 * 2.13 * fade);   // multiply darken (silhouettes the sun)
+                const cop = Math.min(0.4, CONFIG.shipFill * 0.85 * 1.07 * fade);   // multiply darken (silhouettes the sun)
                 for (const [a, b2, c2] of M.F) pushTriClip(P[a].x, P[a].y, P[b2].x, P[b2].y, P[c2].x, P[c2].y, Math.sqrt(1 - cop), WHITE);
                 for (const [a, b2] of M.E) pushLineClip(P[a].x, P[a].y, P[b2].x, P[b2].y, 0.7 * fade, OM);
                 for (let k = 0; k < M.LIGHTS.length; k++){                                  // blinking running lights
