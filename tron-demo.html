@@ -1032,38 +1032,39 @@
             b.age += dt;
             const u = b.T > 1e-3 ? b.age / b.T : 1;
             b.x = b.x0 + (b.tx - b.x0) * u; b.y = b.y0 + (b.ty - b.y0) * u; b.z = b.z0 + (b.tz - b.z0) * u;
-            if (u >= 1){
+            if (u >= 1 && !b.resolved){
+                b.resolved = true;
                 const tg = b.target;
-                if (b.decisive && tg && !tg.dead){
+                let hit = false;
+                if (b.decisive && tg && !tg.dead && Math.random() < b.acc){
+                    hit = true;
                     if (b.kind === 'enemy'){                         // capital/turret -> fighter or transit
-                        if (Math.random() < b.acc){
+                        tg.dead = true;
+                        if (tg.slot) detonate(tg.wx, tg.wh, tg.wz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
+                        else detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
+                    } else if (tg.isTurret){                        // indestructible — sparks only
+                        sparkBurst(b.x, b.y, b.z, 5);
+                    } else if (tg.cap){                             // chip the capital's HP
+                        sparkBurst(b.x, b.y, b.z, 6);
+                        if (--tg.hp <= 0){
                             tg.dead = true;
-                            if (tg.slot) detonate(tg.wx, tg.wh, tg.wz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
-                            else detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
+                            detonate(tg.x, tg.h, tg.z, CAPITAL_MODEL, tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 4, CAPC);
+                            FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]);
                         }
-                    } else if (tg.isTurret){                        // formation -> turret: sparks only, indestructible
-                        if (Math.random() < b.acc) sparkBurst(b.x, b.y, b.z, 5);
-                    } else if (tg.cap){                             // formation -> capital (chip away at HP)
-                        if (Math.random() < b.acc){
-                            sparkBurst(b.x, b.y, b.z, 6);
-                            if (--tg.hp <= 0){
-                                tg.dead = true;
-                                detonate(tg.x, tg.h, tg.z, CAPITAL_MODEL, tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 4, CAPC);
-                                FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]);
-                            }
-                        }
-                    } else if (tg.isPoly){                          // formation -> tumbling polyhedron: big blast
-                        if (Math.random() < b.acc){
-                            tg.dead = true;
-                            detonate(b.tx, b.ty, b.tz, OCTA_MODEL, tg.rx, tg.ry, 0, 1.6, 4, tg.col);
-                        }
-                    } else if (Math.random() < b.acc){              // formation -> transit
+                    } else if (tg.isPoly){                          // tumbling polyhedron: big blast
+                        tg.dead = true;
+                        detonate(b.tx, b.ty, b.tz, OCTA_MODEL, tg.rx, tg.ry, 0, 1.6, 4, tg.col);
+                    } else {                                        // transit
                         tg.dead = true;
                         detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
                     }
                 }
-                FX.bolts.splice(i, 1);
-            } else if (b.z < 0.4 || b.z > 36){ FX.bolts.splice(i, 1); }
+                if (hit){ FX.bolts.splice(i, 1); continue; }
+                // a MISS: 1/3 glances off with a glow burst, 2/3 carries on past the ship
+                if (Math.random() < 0.3333){ sparkBurst(b.x, b.y, b.z, 5); FX.bolts.splice(i, 1); continue; }
+                // else keep flying (resolved prevents another roll); culled below when it leaves the field
+            }
+            if (b.z < 0.4 || b.z > 36) FX.bolts.splice(i, 1);
         }
         for (let i = FX.blasts.length - 1; i >= 0; i--){ const bl = FX.blasts[i];
             bl.age += dt; if (bl.age >= bl.dur) FX.blasts.splice(i, 1); }
@@ -1142,13 +1143,16 @@
         const sp = rand(0.25, 0.55), dev = rand(-0.3, 0.3);           // 50% of the old cruise speed
         const ang = (dir > 0 ? Math.PI / 2 : -Math.PI / 2) - dir * dev;
         const ovx = Math.sin(ang) * sp, ovz = Math.cos(ang) * sp * 0.3;
-        const theta = rand(-8, 12) * Math.PI / 180;                   // gentle climb/descent
+        const theta = rand(-2, 12) * Math.PI / 180;                   // gentle climb (little/no descent)
         const ovy = (Math.abs(ovx) / (sw / sh)) * Math.tan(theta);
         const vmag = Math.hypot(ovx, ovy, ovz) || 1;
-        return { x: dir > 0 ? -span : span, z, h: rand(0.15, 0.55), dir, ovx, ovz, ovy, cap: true,
+        const scaleMul = rand(5.0, 8.0) * 1.3;                        // 1.3x bigger
+        const Sxy = CONFIG.shipScale * scaleMul;
+        const h = 0.4 * Sxy + rand(0.2, 0.7);                         // lift it so the whole hull is above the horizon
+        return { x: dir > 0 ? -span : span, z, h, dir, ovx, ovz, ovy, cap: true,
             yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
             pitch: -Math.asin(ovy / vmag), roll: -dir * rand(0.05, 0.16),
-            scaleMul: rand(5.0, 8.0), lights: 0,
+            scaleMul, lights: 0,
             hp: Math.round(rand(CONFIG.capHP[0], CONFIG.capHP[1])), dead: false, fireCool: 0, backCool: 1.0, onScreen: false };
     }
 
@@ -1299,7 +1303,7 @@
             fxPtData[pi++] = cx(nx); fxPtData[pi++] = cy(ny); fxPtData[pi++] = size;
             fxPtData[pi++] = r; fxPtData[pi++] = g; fxPtData[pi++] = b;
         };
-        const HOT = CONFIG.col.hot, CYAN = CONFIG.col.cyan, MAG = CONFIG.col.magenta;
+        const HOT = CONFIG.col.hot, CYAN = CONFIG.col.cyan, MAG = CONFIG.col.magenta, WHITE = [1, 1, 1];
         const wrap1 = v => ((v % 1) + 1) % 1;
 
       if (bg){   // ───── behind-the-sun background layer (nebula, near-stars, ridge) ─────
@@ -1447,14 +1451,13 @@
             const P = M.V.map(proj);
             const nf = wz => Math.max(0.45, Math.min(1.1, 0.85 + (z - wz) * 2.2));  // near=bright, far=dim
             const baseB = (lead ? 1.05 : 0.8) * fade;
-            // translucent hull fill first, so the bright wireframe edges draw on top of it.
-            // Additive + low alpha = neon glass; faces seen edge-on cover few pixels and so
-            // naturally contribute little, giving the ship a soft sense of volume.
+            // hull fill (drawn with MULTIPLY blend): white * sqrt(1-op) so it darkens bright backgrounds
+            // (the sun -> silhouette) but barely touches the dark sky; the bright wireframe edges draw on top.
             if (M.F && CONFIG.shipFill > 0){
-                const fillB = CONFIG.shipFill * fade;
-                for (const [a, b, c2] of M.F)
-                    pushTriClip(P[a].x, P[a].y, P[b].x, P[b].y, P[c2].x, P[c2].y,
-                                fillB * (nf(P[a].wz) + nf(P[b].wz) + nf(P[c2].wz)) / 3, col);
+                for (const [a, b, c2] of M.F){
+                    const op = Math.min(0.6, CONFIG.shipFill * 1.6 * fade * (nf(P[a].wz) + nf(P[b].wz) + nf(P[c2].wz)) / 3);
+                    pushTriClip(P[a].x, P[a].y, P[b].x, P[b].y, P[c2].x, P[c2].y, Math.sqrt(1 - op), WHITE);
+                }
             }
             for (const [a, b] of M.E)
                 pushLineClip(P[a].x, P[a].y, P[b].x, P[b].y, baseB * 0.5 * (nf(P[a].wz) + nf(P[b].wz)), col);
@@ -1635,8 +1638,8 @@
             const fade = Math.min(1, Math.max(0, Math.min(ux + 0.35, 1.35 - ux) / 0.3));   // ease on/off at the sides
             if (fade > 0.01){
                 const P = M.V.map(proj);
-                const fillB = CONFIG.shipFill * 0.85 * fade;
-                for (const [a, b2, c2] of M.F) pushTriClip(P[a].x, P[a].y, P[b2].x, P[b2].y, P[c2].x, P[c2].y, fillB, OM);
+                const cop = Math.min(0.6, CONFIG.shipFill * 0.85 * 1.6 * fade);   // multiply darken (silhouettes the sun)
+                for (const [a, b2, c2] of M.F) pushTriClip(P[a].x, P[a].y, P[b2].x, P[b2].y, P[c2].x, P[c2].y, Math.sqrt(1 - cop), WHITE);
                 for (const [a, b2] of M.E) pushLineClip(P[a].x, P[a].y, P[b2].x, P[b2].y, 0.7 * fade, OM);
                 for (let k = 0; k < M.LIGHTS.length; k++){                                  // blinking running lights
                     const pp = P[M.LIGHTS[k]], bl = 0.5 + 0.5 * Math.sin(c.lights * 3 + k * 1.7), col = (k % 2) ? OM : CONFIG.col.orange;
@@ -1711,14 +1714,17 @@
     // ──────────────────────────────────────────────────────────────
     function drawQuad(){ gl.bindVertexArray(quadVAO); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
 
-    // upload + draw a buildFX result (translucent tris, then lines, then point sprites; additive)
-    function drawFX(fx){
+    // upload + draw a buildFX result (translucent tris, then lines, then point sprites; additive).
+    // triMul=true draws the tris with a MULTIPLY blend (hull fills darken bright backgrounds like the sun).
+    function drawFX(fx, triMul){
         if (fx.triVerts){
+            if (triMul) gl.blendFunc(gl.ZERO, gl.SRC_COLOR);   // result = dst * src  (darken)
             gl.useProgram(GL.line);                // line shader is primitive-agnostic (pos/alpha/col)
             gl.bindVertexArray(fxTriVAO);
             gl.bindBuffer(gl.ARRAY_BUFFER, fxTriBuf);
             gl.bufferSubData(gl.ARRAY_BUFFER, 0, fxTriData, 0, fx.triFloats);
             gl.drawArrays(gl.TRIANGLES, 0, fx.triVerts);
+            if (triMul) gl.blendFunc(gl.ONE, gl.ONE);          // restore additive for lines/points
         }
         if (fx.lineVerts){
             gl.useProgram(GL.line);
@@ -1775,7 +1781,7 @@
         }
 
         // background cameos (nebula, stars, ridge) — additive, BEFORE the sun so they sit behind it
-        drawFX(buildFX(timeSec, true));
+        drawFX(buildFX(timeSec, true), false);
 
         // sun disc overlay (alpha-blended) AFTER the network + background cameos
         gl.useProgram(GL.scene);
@@ -1784,8 +1790,8 @@
         drawQuad();
         gl.blendFunc(gl.ONE, gl.ONE);                       // back to additive for cameos
 
-        // foreground cameos (ships, transits, bolts, explosions, …) — additive, in front of the sun
-        drawFX(buildFX(timeSec, false));
+        // foreground cameos in front of the sun: hull fills MULTIPLY (silhouette the sun), edges/glows add
+        drawFX(buildFX(timeSec, false), true);
         gl.disable(gl.BLEND);
 
         // --- Pass 2: bright-pass -> fboA (half res) ---
