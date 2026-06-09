@@ -1270,7 +1270,7 @@
         return { x: cx(uvx), y: cy(1 - uvy), vis: uvy > 0.0 && uvy < H0 };  // note: cy expects y-down
     }
 
-    function buildFX(timeSec){
+    function buildFX(timeSec, bg){    // bg=true builds only the behind-the-sun layer (nebula, stars, ridge)
         const dprNow = Math.min(window.devicePixelRatio || 1, CONFIG.dprCap);
         const aspect = sw / sh;
         let li = 0, pi = 0, ti = 0;
@@ -1302,6 +1302,7 @@
         const HOT = CONFIG.col.hot, CYAN = CONFIG.col.cyan, MAG = CONFIG.col.magenta;
         const wrap1 = v => ((v % 1) + 1) % 1;
 
+      if (bg){   // ───── behind-the-sun background layer (nebula, near-stars, ridge) ─────
         // --- background depth: soft parallax nebula clouds + a drifting near-star layer ---
         for (const nb of FX.nebula){
             const px = wrap1(nb.x + cam.headSend * (0.02 + nb.depth * 0.05));
@@ -1340,6 +1341,8 @@
                 }
             }
         }
+        return { lineVerts: li / 6, ptVerts: pi / 6, triVerts: ti / 6, lineFloats: li, ptFloats: pi, triFloats: ti };
+      }   // ───── end background layer; everything below is the in-front layer ─────
 
         // --- distant lightning: a quick jagged strike + brief sky flicker ---
         if (FX.lightning){
@@ -1708,6 +1711,31 @@
     // ──────────────────────────────────────────────────────────────
     function drawQuad(){ gl.bindVertexArray(quadVAO); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
 
+    // upload + draw a buildFX result (translucent tris, then lines, then point sprites; additive)
+    function drawFX(fx){
+        if (fx.triVerts){
+            gl.useProgram(GL.line);                // line shader is primitive-agnostic (pos/alpha/col)
+            gl.bindVertexArray(fxTriVAO);
+            gl.bindBuffer(gl.ARRAY_BUFFER, fxTriBuf);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, fxTriData, 0, fx.triFloats);
+            gl.drawArrays(gl.TRIANGLES, 0, fx.triVerts);
+        }
+        if (fx.lineVerts){
+            gl.useProgram(GL.line);
+            gl.bindVertexArray(fxLineVAO);
+            gl.bindBuffer(gl.ARRAY_BUFFER, fxLineBuf);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, fxLineData, 0, fx.lineFloats);
+            gl.drawArrays(gl.LINES, 0, fx.lineVerts);
+        }
+        if (fx.ptVerts){
+            gl.useProgram(GL.pt);
+            gl.bindVertexArray(fxPtVAO);
+            gl.bindBuffer(gl.ARRAY_BUFFER, fxPtBuf);
+            gl.bufferSubData(gl.ARRAY_BUFFER, 0, fxPtData, 0, fx.ptFloats);
+            gl.drawArrays(gl.POINTS, 0, fx.ptVerts);
+        }
+    }
+
     function render(timeSec){
         const C = CONFIG.col;
         const geo = buildGeometry();
@@ -1746,36 +1774,18 @@
             gl.drawArrays(gl.POINTS, 0, geo.ptVerts);
         }
 
-        // sun disc overlay (alpha-blended) AFTER the network, so dots/lines sit behind the sun
+        // background cameos (nebula, stars, ridge) — additive, BEFORE the sun so they sit behind it
+        drawFX(buildFX(timeSec, true));
+
+        // sun disc overlay (alpha-blended) AFTER the network + background cameos
         gl.useProgram(GL.scene);
         gl.uniform1f(GL.sceneU.uSunOnly, 1.0);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         drawQuad();
         gl.blendFunc(gl.ONE, gl.ONE);                       // back to additive for cameos
 
-        // cameo objects — additive into the same FBO so they glow through bloom
-        const fx = buildFX(timeSec);
-        if (fx.triVerts){                          // translucent ship-hull fills (under the wireframe)
-            gl.useProgram(GL.line);                // line shader is primitive-agnostic (pos/alpha/col)
-            gl.bindVertexArray(fxTriVAO);
-            gl.bindBuffer(gl.ARRAY_BUFFER, fxTriBuf);
-            gl.bufferSubData(gl.ARRAY_BUFFER, 0, fxTriData, 0, fx.triFloats);
-            gl.drawArrays(gl.TRIANGLES, 0, fx.triVerts);
-        }
-        if (fx.lineVerts){
-            gl.useProgram(GL.line);
-            gl.bindVertexArray(fxLineVAO);
-            gl.bindBuffer(gl.ARRAY_BUFFER, fxLineBuf);
-            gl.bufferSubData(gl.ARRAY_BUFFER, 0, fxLineData, 0, fx.lineFloats);
-            gl.drawArrays(gl.LINES, 0, fx.lineVerts);
-        }
-        if (fx.ptVerts){
-            gl.useProgram(GL.pt);
-            gl.bindVertexArray(fxPtVAO);
-            gl.bindBuffer(gl.ARRAY_BUFFER, fxPtBuf);
-            gl.bufferSubData(gl.ARRAY_BUFFER, 0, fxPtData, 0, fx.ptFloats);
-            gl.drawArrays(gl.POINTS, 0, fx.ptVerts);
-        }
+        // foreground cameos (ships, transits, bolts, explosions, …) — additive, in front of the sun
+        drawFX(buildFX(timeSec, false));
         gl.disable(gl.BLEND);
 
         // --- Pass 2: bright-pass -> fboA (half res) ---
