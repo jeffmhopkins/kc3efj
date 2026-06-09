@@ -870,7 +870,7 @@
         // keep it on-screen the whole ride: the grid spreads x outward as z shrinks, so bound the
         // world-x by the spread at the near (despawn) end, against the off-centre vanishing point.
         const maxOff = Math.max(0.12, 0.40 - Math.abs(cam.headSend));
-        const xMax = maxOff * aspT * 1.0 * 0.6 * 2;   // doubled spawn x-width (may exit a side before the bottom)
+        const xMax = maxOff * aspT * 1.0 * 0.6 * 4;   // wide spawn x-spread (often off-centre; may exit a side)
         const x = rand(-1, 1) * xMax;
         return { x, z, h: 0, isTurret: true, target: null, switchCool: 0, fireCool: CONFIG.turretFireGap, shotCool: 0, aim: { x, h: 0.2, z: z + 1 } };
     }
@@ -1060,7 +1060,7 @@
             const tg = tu.target;
             if (tg && !tg.dead){
                 const gg = Math.min(12, tu.z);                     // match render scale (constant on-screen size)
-                const apex = { x: tu.x, h: tu.h + 0.026 * gg, z: tu.z };  // barrel pivot atop the base
+                const apex = { x: tu.x, h: tu.h + 0.013 * gg, z: tu.z };  // barrel pivot atop the base (half size)
                 const gx = tg.slot ? tg.wx : tg.x;                 // aim at the ship's live position
                 const gh = tg.slot ? tg.wh : tg.h;
                 const gz = tg.slot ? tg.wz : tg.z;
@@ -1178,7 +1178,7 @@
             e.vy -= GRAV * dt;
             e.x += e.vx * dt; e.z += (e.vz - gs2) * dt; e.y += e.vy * dt; e.life -= dt;
             if (e.y <= 0){ FX.groundSparks.push({ x: e.x, z: e.z, age: 0, dur: rand(0.35, 0.6) }); FX.embers.splice(i, 1); }
-            else if (e.life <= 0 || e.z < 0.3 || e.z > 40) FX.embers.splice(i, 1);   // low cull so close (squad) deaths still spark the floor
+            else if (e.life <= 0 || e.z < 0.3 || e.z > 130) FX.embers.splice(i, 1);   // low near-cull (squad deaths spark floor); far enough for deep kills
         }
         if (FX.embers.length > 150) FX.embers.splice(0, FX.embers.length - 150);
         for (let i = FX.groundSparks.length - 1; i >= 0; i--){ const g = FX.groundSparks[i];
@@ -1734,7 +1734,7 @@
             const fade = Math.min(1, Math.max(0, (tu.z - 0.55) / 0.5));     // stay visible nearly to the bottom
             // world size ~proportional to z so the on-screen size stays small and CONSTANT the whole ride
             const g = Math.min(12, tu.z);
-            const sB = 0.018 * g, baseH = 0.026 * g, barrelLen = 0.05 * g;
+            const sB = 0.009 * g, baseH = 0.013 * g, barrelLen = 0.025 * g;   // half size
             if (fade > 0.01){
                 const A = projectWorld(tu.x, tu.z, baseH, aspect);          // barrel pivot atop the base
                 const corners = [[sB, sB], [-sB, sB], [-sB, -sB], [sB, -sB]].map(d => projectWorld(tu.x + d[0], tu.z + d[1], 0, aspect));
