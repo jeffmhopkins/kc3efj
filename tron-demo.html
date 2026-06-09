@@ -812,7 +812,7 @@
         const maxOff = Math.max(0.12, 0.40 - Math.abs(cam.headSend));
         const xMax = maxOff * aspT * 1.0 * 0.6;
         const x = rand(-1, 1) * xMax;
-        return { x, z, h: 0, target: null, switchCool: 0, fireCool: CONFIG.turretFireGap, aim: { x, h: 0.2, z: z + 1 } };
+        return { x, z, h: 0, isTurret: true, target: null, switchCool: 0, fireCool: CONFIG.turretFireGap, shotCool: 0, aim: { x, h: 0.2, z: z + 1 } };
     }
 
     function updateFX(dt){
@@ -960,6 +960,19 @@
                     }
                 }
             }
+
+            // formation also lights up the ground turret — it can hit it, but can't destroy it
+            const tur = FX.turret;
+            if (tur){
+                const { best } = acquire(tur.x, tur.z, tur.h);
+                if (best && tur.shotCool <= 0){
+                    tur.shotCool = CONFIG.blastCooldown;
+                    if (Math.random() < CONFIG.blastFireProb){
+                        const Sxy = CONFIG.shipScale * best.sh.scaleMul, from = { x: best.sx, h: best.shh, z: best.sz + Sxy * 1.3 };
+                        fireVolley(from, Sxy * 0.45, leadAim(from, tur.x, tur.h, tur.z, 0, 0, -gsB), tur, 'ally', CY, CONFIG.boltAccuracy);
+                    }
+                }
+            }
         }
 
         // capital RETURNS FIRE — only while it is itself on-screen; targets fighters AND transits
@@ -994,14 +1007,15 @@
             }
             const tg = tu.target;
             if (tg && !tg.dead){
-                const apex = { x: tu.x, h: tu.h + 0.18, z: tu.z };  // barrel pivot atop the base
+                const gg = Math.min(12, tu.z) * (0.35 + 0.65 * Math.min(1, (tu.z - 0.55) / 2.0));  // match render scale
+                const apex = { x: tu.x, h: tu.h + 0.026 * gg, z: tu.z };  // barrel pivot atop the base
                 const gx = tg.slot ? (FX.squad.xw0 + tg.slot.dxw) : tg.x;
                 const gh = tg.slot ? (CONFIG.shipHeight + tg.slot.dh) : tg.h;
                 const gz = tg.slot ? (FX.squad.baseZ + tg.slot.dz) : tg.z;
                 const vx = tg.slot ? 0 : tg.ovx, vy = tg.slot ? 0 : tg.ovy, vz = tg.slot ? 0 : tg.ovz - gsB;
                 tu.aim = leadAim(apex, gx, gh, gz, vx, vy, vz);     // barrel tracks the lead point
                 const tinv = 1 / (Math.max(0.5, tu.z) * 0.6), tuvx = 0.5 + cam.headSend + tu.x * tinv / aspB;
-                const onScreen = tuvx > 0.02 && tuvx < 0.98 && tu.z > 1.2;   // never fire while off-screen
+                const onScreen = tuvx > 0.02 && tuvx < 0.98 && tu.z > 0.7;   // never fire while off-screen
                 if (onScreen && tu.fireCool <= 0){
                     tu.fireCool = CONFIG.turretFireGap;
                     fireVolley(apex, 0.05, tu.aim, tg, 'enemy', CAPC, CONFIG.turretAccuracy);
@@ -1024,6 +1038,8 @@
                             if (tg.slot) detonate(b.tx, b.ty, b.tz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
                             else detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
                         }
+                    } else if (tg.isTurret){                        // formation -> turret: sparks only, indestructible
+                        if (Math.random() < b.acc) sparkBurst(b.x, b.y, b.z, 5);
                     } else if (tg.cap){                             // formation -> capital (chip away at HP)
                         if (Math.random() < b.acc){
                             sparkBurst(b.x, b.y, b.z, 6);
@@ -1094,7 +1110,8 @@
             tu.z -= (reduced ? 0 : CONFIG.gridScroll) * dt;     // tracks with the grid
             if (tu.switchCool > 0) tu.switchCool -= dt;
             if (tu.fireCool > 0) tu.fireCool -= dt;
-            if (tu.z < 1.0){ FX.turret = null; FX.nextTurret = rand(CONFIG.turretGap[0], CONFIG.turretGap[1]); }
+            if (tu.shotCool > 0) tu.shotCool -= dt;             // formation's re-fire timer against it
+            if (tu.z < 0.55){ FX.turret = null; FX.nextTurret = rand(CONFIG.turretGap[0], CONFIG.turretGap[1]); }
         }
 
         // falling embers from detonations — arc out, fall under gravity, spark on the grid floor
@@ -1501,6 +1518,10 @@
             pushLineClip(Tt.x, Tt.y, C.x, C.y, 1.1, bc);
             pushPt((C.x + 1) * 0.5, (1 - C.y) * 0.5, Math.min(15, C.inv * 34) * dprNow,
                    bc[0] * 1.5, bc[1] * 1.5, bc[2] * 1.5);
+            if (b.age < 0.10){                                  // muzzle flash anchored at the firing cannon
+                const O = projectWorld(b.x0, b.z0, b.y0, aspect), ff = 1 - b.age / 0.10;
+                pushPt((O.x + 1) * 0.5, (1 - O.y) * 0.5, (6 + 12 * ff) * dprNow, bc[0]*1.6*ff, bc[1]*1.6*ff, bc[2]*1.6*ff);
+            }
         }
 
         // detonations: hull blown apart + omnidirectional shrapnel + white flash + double shockwave
@@ -1599,8 +1620,11 @@
 
         // --- ground turret: small ominous emplacement on the grid; barrel tracks its target ---
         if (FX.turret){
-            const tu = FX.turret, OM = CONFIG.col.cap, sB = 0.13, baseH = 0.18, barrelLen = 0.34;
-            const fade = Math.min(1, Math.max(0, (tu.z - 1.0) / 1.4));      // fade out as it sweeps past the camera
+            const tu = FX.turret, OM = CONFIG.col.cap;
+            const fade = Math.min(1, Math.max(0, (tu.z - 0.55) / 0.5));     // stay visible nearly to the bottom
+            // world size ~proportional to z (constant on-screen size), then shrink as it nears the bottom edge
+            const g = Math.min(12, tu.z) * (0.35 + 0.65 * Math.min(1, (tu.z - 0.55) / 2.0));
+            const sB = 0.018 * g, baseH = 0.026 * g, barrelLen = 0.05 * g;
             if (fade > 0.01){
                 const A = projectWorld(tu.x, tu.z, baseH, aspect);          // barrel pivot atop the base
                 const corners = [[sB, sB], [-sB, sB], [-sB, -sB], [sB, -sB]].map(d => projectWorld(tu.x + d[0], tu.z + d[1], 0, aspect));
