@@ -245,13 +245,14 @@
             float lines = fract(uv.y * 55.0);
             slit = 1.0 - step(lines, clamp(k * 0.95, 0.0, 0.85));
         }
+        float aboveHz = smoothstep(horizon - 0.004, horizon + 0.004, uv.y);   // hide everything below the horizon
         if (uSunOnly > 0.5) {                                   // overlay pass: just the disc, on top of the network
-            fragColor = vec4(sunCol, disc * slit);
+            fragColor = vec4(sunCol, disc * slit * aboveHz);
             return;
         }
 
         // base pass: glow stays behind the network; disc is drawn later (overlay) so dots/lines sit behind it
-        col += vec3(1.0, 0.32, 0.52) * exp(-r * 7.0) * 0.5;     // sun glow
+        col += vec3(1.0, 0.32, 0.52) * exp(-r * 7.0) * 0.5 * aboveHz;   // sun glow (above horizon only)
         col += uCyan * exp(-abs(uv.y - horizon) * 220.0) * 0.6; // bright cyan horizon seam
 
         fragColor = vec4(col, 1.0);
@@ -557,7 +558,7 @@
         pulses = [];
         nextPulse = rand(CONFIG.pulseEvery[0], CONFIG.pulseEvery[1]);
         // pick a random grid orientation once per load (so we're not heading straight in)
-        cam.headSend = (Math.random() < 0.5 ? -1 : 1) * rand(CONFIG.headingRange[0], CONFIG.headingRange[1]);
+        cam.headSend = 0;   // centered vanishing point + sun (no random heading)
         cam.pitchSend = 0;
         initFX();
     }
@@ -827,7 +828,7 @@
     }
 
     function makeTurret(){
-        const z = rand(9, 16), aspT = sw / sh;
+        const z = rand(9, 40), aspT = sw / sh;   // can spawn far back too (rides in slowly)
         // keep it on-screen the whole ride: the grid spreads x outward as z shrinks, so bound the
         // world-x by the spread at the near (despawn) end, against the off-centre vanishing point.
         const maxOff = Math.max(0.12, 0.40 - Math.abs(cam.headSend));
@@ -900,7 +901,7 @@
         const capVis = !!(FX.capital && FX.capital.onScreen);
         FX.nextTransit -= dt;
         if (FX.nextTransit <= 0 && FX.transits.length < (capVis ? 4 : 2)){
-            const dir = Math.random() < 0.5 ? 1 : -1, z = rand(12, 44);   // deeper range — some pass far out
+            const dir = Math.random() < 0.5 ? 1 : -1, z = rand(12, 88);   // deeper range — some pass far out
             const span = z * 0.6 * (sw / sh) * 0.85;
             // own heading varies off pure tangent: angle from +z (forward), ~90deg +/- up to ~50deg
             const sp = rand(0.6, 2.6), dev = rand(-0.9, 0.9);   // varied speed + heading
@@ -928,7 +929,7 @@
             const zc = Math.max(0.5, tr.z), inv = 1 / (zc * 0.6);
             const uvx = 0.5 + cam.headSend + tr.x * inv / aspT;
             const uvy = (CONFIG.horizon + cam.pitchSend) - 0.20 / zc + tr.h * inv;   // y-up
-            if (tr.dead || tr.z < 1.0 || tr.z > 60 || uvx < -0.4 || uvx > 1.4 || uvy > 1.35) FX.transits.splice(i, 1);
+            if (tr.dead || tr.z < 1.0 || tr.z > 120 || uvx < -0.4 || uvx > 1.4 || uvy > 1.35) FX.transits.splice(i, 1);
         }
 
         // ── space battle: formation snipes crossing craft; the capital ship fires back ──
