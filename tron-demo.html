@@ -883,7 +883,7 @@
                  squad: null, transits: [], bolts: [], blasts: [], embers: [], groundSparks: [],
                  nebula: [], nearStars: [], lightning: null, capital: null, turret: null, car: null,
                  ridgeAmt: 0, ridgeTarget: 0,
-                 nextStar: 0, nextComet: 0, nextPoly: 0, nextCycle: 0, nextGlyph: 0, nextShip: 0, nextTransit: 0,
+                 nextStar: 0, nextComet: 0, nextPoly: 0, nextCycle: 0, nextGlyph: 0, nextShip: 0, nextTransit: 0, nextFoe: 0,
                  nextRidge: 0, nextLightning: 0, nextCapital: 0, nextTurret: 0, nextCar: 0 };
 
     function buildRidge(){
@@ -909,7 +909,7 @@
         FX.nextGlyph = rand(CONFIG.glyphGap[0], CONFIG.glyphGap[1]);
         FX.squad = null;
         FX.nextShip = 4;                                  // first pass arrives soon; later gaps use shipGap
-        FX.transits = []; FX.nextTransit = rand(3, 8);
+        FX.transits = []; FX.nextTransit = rand(3, 8); FX.nextFoe = rand(8, 16);
         FX.bolts = []; FX.blasts = []; FX.embers = []; FX.groundSparks = [];
         FX.ridgeAmt = 0; FX.ridgeTarget = Math.random() < CONFIG.ridgePresent ? 1 : 0;
         FX.nextRidge = rand(25, 60);
@@ -943,6 +943,26 @@
 
         // rare light-car streaking past toward the sun
         FX.car = null; FX.nextCar = rand(CONFIG.carGap[0], CONFIG.carGap[1]);
+    }
+
+    // a side-to-side transit ship; foe=true makes it an ominous hostile that hunts the friendly transits
+    function spawnTransit(foe){
+        const dir = Math.random() < 0.5 ? 1 : -1, z = rand(12, 88);   // deeper range — some pass far out
+        const span = z * 0.6 * (sw / sh) * 0.85;
+        const sp = rand(0.6, 2.6), dev = rand(-0.9, 0.9);             // varied speed + heading
+        const ang = (dir > 0 ? Math.PI / 2 : -Math.PI / 2) - dir * dev;
+        const ovx = Math.sin(ang) * sp, ovz = Math.cos(ang) * sp;
+        const theta = rand(0, 20) * Math.PI / 180;                   // climb randomized 0-20deg
+        const ovy = (Math.abs(ovx) / (sw / sh)) * Math.tan(theta);
+        const vmag = Math.hypot(ovx, ovy, ovz);
+        const roll = -dir * rand(0.55, 1.0);                         // bank so the wing planform faces us
+        FX.transits.push({ x: dir > 0 ? -span : span, z, h: rand(0.10, 0.45),
+            ovx, ovz, ovy, roll,
+            yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
+            pitch: -Math.asin(ovy / vmag),                           // nose + jet aligned to true heading
+            plume: rand(0.5, 1.7),
+            model: Math.random() * SHIP_MODELS.length | 0, scaleMul: rand(1.3, 2.1),
+            foe: !!foe, fireCool: rand(0.4, 1.4) });
     }
 
     function makeCar(){
@@ -1035,28 +1055,18 @@
         // sporadic distant ships transiting side-to-side (ambient; runs independently).
         // while a capital ship is visible the sky gets busier: twice the spawn rate, more on-screen at once.
         const capVis = !!(FX.capital && FX.capital.onScreen);
+        let foeCount = 0; for (const t of FX.transits) if (t.foe) foeCount++;
+        const friendCount = FX.transits.length - foeCount;
         FX.nextTransit -= dt;
-        if (FX.nextTransit <= 0 && FX.transits.length < (capVis ? 4 : 2)){
-            const dir = Math.random() < 0.5 ? 1 : -1, z = rand(12, 88);   // deeper range — some pass far out
-            const span = z * 0.6 * (sw / sh) * 0.85;
-            // own heading varies off pure tangent: angle from +z (forward), ~90deg +/- up to ~50deg
-            const sp = rand(0.6, 2.6), dev = rand(-0.9, 0.9);   // varied speed + heading
-            const ang = (dir > 0 ? Math.PI / 2 : -Math.PI / 2) - dir * dev;
-            const ovx = Math.sin(ang) * sp, ovz = Math.cos(ang) * sp;
-            const theta = rand(0, 20) * Math.PI / 180;          // climb randomized 0-20deg (as drawn on screen)
-            const ovy = (Math.abs(ovx) / (sw / sh)) * Math.tan(theta);   // matches on-screen rise to theta
-            const vmag = Math.hypot(ovx, ovy, ovz);
-            // bank into the crossing so the wing planform faces us — a near-tangent heading
-            // viewed edge-on (roll 0) collapses the flat hull to a thin line. Tilt the dorsal
-            // side toward the camera (sign = -dir), magnitude enough to show the wings.
-            const roll = -dir * rand(0.55, 1.0);
-            FX.transits.push({ x: dir > 0 ? -span : span, z, h: rand(0.10, 0.45),
-                ovx, ovz, ovy, roll,
-                yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
-                pitch: -Math.asin(ovy / vmag),                  // nose + jet aligned to true heading
-                plume: rand(0.5, 1.7),                          // varied jet plume strength
-                model: Math.random() * SHIP_MODELS.length | 0, scaleMul: rand(1.3, 2.1) });
+        if (FX.nextTransit <= 0 && friendCount < (capVis ? 4 : 2)){
+            spawnTransit(false);
             FX.nextTransit = rand(CONFIG.transitGap[0], CONFIG.transitGap[1]) * (capVis ? 0.5 : 1);
+        }
+        // ominous foe ships — about 1/3 as many as the friendlies (spawn at ~1/3 the rate); they hunt the others
+        FX.nextFoe -= dt;
+        if (FX.nextFoe <= 0 && foeCount < (capVis ? 2 : 1)){
+            spawnTransit(true);
+            FX.nextFoe = rand(CONFIG.transitGap[0], CONFIG.transitGap[1]) * 3 * (capVis ? 0.5 : 1);
         }
         const aspT = sw / sh;
         for (let i = FX.transits.length - 1; i >= 0; i--){
@@ -1223,6 +1233,24 @@
                 }
             }
         }
+
+        // ominous foe transits open fire on the friendly transits crossing the sky with them
+        for (const f of FX.transits){
+            if (!f.foe || f.dead || f.z < 3){ continue; }
+            if (f.fireCool > 0){ f.fireCool -= dt; continue; }
+            if (!visOnScreen(f.x, f.z, f.h)){ f.fireCool = 0.4; continue; }
+            let tgt = null, n = 0;                                    // reservoir-pick a visible friendly transit
+            for (const t of FX.transits){
+                if (t.foe || t.dead || t.z < 3 || !visOnScreen(t.x, t.z, t.h)) continue;
+                if (Math.random() < 1 / ++n) tgt = t;
+            }
+            if (!tgt){ f.fireCool = 0.5; continue; }
+            f.fireCool = rand(0.7, 1.5);
+            const Sxy = CONFIG.shipScale * f.scaleMul, from = { x: f.x, h: f.h, z: f.z };
+            const aim = leadAim(from, tgt.x, tgt.h, tgt.z, tgt.ovx, tgt.ovy, tgt.ovz - gsB);
+            fireVolley(from, Sxy * 0.4, aim, tgt, 'enemy', CAPC, CONFIG.boltAccuracy);
+        }
+
         // advance tracers; accuracy rolled AT IMPACT. ally bolts hurt transits/capital, enemy bolts kill fighters
         for (let i = FX.bolts.length - 1; i >= 0; i--){
             const b = FX.bolts[i];
@@ -1269,7 +1297,7 @@
                         if (b.kind === 'enemy'){                     // capital/turret -> fighter or transit
                             tg.dead = true;
                             if (tg.slot) detonate(tg.wx, tg.wh, tg.wz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
-                            else detonate(tg.x, tg.h, tg.z, tg.isCar ? CAR_MODEL : SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, tg.isCar ? CONFIG.col.orange : CY);
+                            else detonate(tg.x, tg.h, tg.z, tg.isCar ? CAR_MODEL : SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, tg.isCar ? CONFIG.col.orange : (tg.foe ? CAPC : CY));
                         } else if (tg.isPoly){                      // tumbling polyhedron: big blast
                             tg.dead = true;
                             detonate(b.tx, b.ty, b.tz, OCTA_MODEL, tg.rx, tg.ry, 0, 1.6, 4, tg.col);
@@ -1278,9 +1306,9 @@
                             tg.dead = true;
                             detonate(tg.x, tg.h, tg.z, CAR_MODEL, tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CONFIG.col.orange);
                             if (b.shooter) b.shooter.hasMissile = true;
-                        } else {                                    // transit
+                        } else {                                    // transit (friendly or ominous foe)
                             tg.dead = true;
-                            detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
+                            detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, tg.foe ? CAPC : CY);
                             if (b.shooter) b.shooter.hasMissile = true;
                         }
                     }
@@ -1832,7 +1860,7 @@
             if (tr.dead) continue;                              // destroyed this frame — the blast stands in for it
             const fade = 0.95 * Math.min(1, (tr.z - 1.0) / 1.5);   // fade only when very close, so they can pass nearer
             if (fade <= 0.01) continue;
-            drawShip(tr.x, tr.z, tr.h, tr.roll, tr.yaw, tr.pitch, tr.scaleMul, CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model], tr.plume);
+            drawShip(tr.x, tr.z, tr.h, tr.roll, tr.yaw, tr.pitch, tr.scaleMul, tr.foe ? CONFIG.col.cap : CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model], tr.plume);
         }
         // rare light-car streaking toward the sun (bright orange; fades in just past the camera)
         if (FX.car && !FX.car.dead){
