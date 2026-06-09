@@ -196,9 +196,8 @@
         float side = smoothstep(2.3, 7.0, ax);
         if (side <= 0.001) return 0.0;
         float yw = z + uTime * uScroll;
-        float n = vnoise(vec2(ax*0.45, yw*0.40))*0.6
-                + vnoise(vec2(ax*1.10, yw*0.95))*0.28
-                + vnoise(vec2(ax*2.60, yw*2.20))*0.12;
+        float n = vnoise(vec2(ax*0.34, yw*0.30))*0.66       // larger, slower-scrolling features
+                + vnoise(vec2(ax*0.85, yw*0.72))*0.30;      // (dropped the fast high-freq octave)
         return side * n * (0.7 + ax * 0.18);
     }
 
@@ -1113,7 +1112,7 @@
                 if (Math.random() < 0.3333){ sparkBurst(b.x, b.y, b.z, 5); FX.bolts.splice(i, 1); continue; }
                 // else keep flying (resolved prevents another roll); culled below when it leaves the field
             }
-            if (b.z < 0.4 || b.z > 36) FX.bolts.splice(i, 1);
+            if (b.z < 0.4 || b.z > 125) FX.bolts.splice(i, 1);   // reach the far (deep) transits before culling
         }
         for (let i = FX.blasts.length - 1; i >= 0; i--){ const bl = FX.blasts[i];
             bl.age += dt; if (bl.age >= bl.dur) FX.blasts.splice(i, 1); }
