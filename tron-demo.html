@@ -644,8 +644,8 @@
 
     function buildGeometry(){
         const C = CONFIG.col;
-        const ox = cam.headSend * 0.18 * 2;   // node field drifts gently with the heading
-        const oy = cam.pitchSend * 0.18 * 2;
+        const ox = cam.headSend * 0.10;        // gentle heading parallax — small so edge dots aren't pushed off-screen
+        const oy = cam.pitchSend * 0.10;
         // lines
         let li = 0;
         for (let k = 0; k < linkList.length; k += 3){
@@ -1321,7 +1321,7 @@
         // --- distant ridge (taller, glowing mountain mass + bright ridgeline) ---
         if (FX.ridge && FX.ridgeAmt > 0.01){
             const R = FX.ridge, SEG = R.pts.length - 1, base = R.scroll + cam.headSend * 0.04;
-            const c = CONFIG.col.purple, amt = FX.ridgeAmt, b = 0.34 * amt, fb = 0.34 * amt;   // crest line back to original alpha
+            const c = CONFIG.col.purple, amt = FX.ridgeAmt, b = 0.226 * amt, fb = 0.34 * amt;   // crest line dimmed to 2/3
             const hz = (1 - CONFIG.horizon) - cam.pitchSend;     // horizon line (y-down)
             for (let i = 0; i < SEG; i++){
                 let x0 = (i / SEG) * R.span - base, x1 = ((i + 1) / SEG) * R.span - base;
@@ -1539,8 +1539,10 @@
             const C = projectWorld(b.x, b.z, b.y, aspect);
             const dx = b.tx - b.x0, dy = b.ty - b.y0, dz = b.tz - b.z0, dl = Math.hypot(dx, dy, dz) || 1;
             const ux = dx / dl, uy = dy / dl, uz = dz / dl;
-            // tail trails behind the head, but never past the near plane (else it projects off to infinity)
-            let tl = 0.7;
+            // streak grows OUT of the muzzle: its length = how far the bolt has flown (capped), so at
+            // firing it's a point on the ship, not a full tail hanging behind it. Also never cross the near plane.
+            const flown = Math.hypot(b.x - b.x0, b.y - b.y0, b.z - b.z0);
+            let tl = Math.min(0.7, flown);
             if (uz > 0) tl = Math.min(tl, Math.max(0, (b.z - 0.6) / uz));
             if (tl > 0.01){
                 const Tt = projectWorld(b.x - ux * tl, b.z - uz * tl, b.y - uy * tl, aspect);
