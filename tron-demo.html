@@ -60,7 +60,7 @@
     const CONFIG = {
         dprCap:        1.5,       // clamp devicePixelRatio: retina fill-rate guard
         fpsCap:        60,        // frame throttle
-        gridScroll:    0.45,      // synthwave floor scroll speed
+        gridScroll:    0.225,     // synthwave floor scroll speed (half of the original)
         horizon:       0.40,      // 0..1 from bottom (=> ~60% from top)
 
         nodeCount:     90,        // network nodes (mid laptop comfortable)
@@ -93,7 +93,7 @@
         polyGap:       [60, 110],    // tumbling wireframe polyhedron (s)
         cycleGap:      [25, 45],     // light-cycle grid streak (s)
         glyphGap:      [90, 150],    // drifting glyph cluster (s)
-        ridgePresent:  0.5,          // fraction of time the distant ridge is faded in
+        ridgePresent:  0.7,          // fraction of time the distant ridge is faded in
 
         // ── background depth: drifting nebula clouds + a parallax near-star layer ──
         nebulaCount:   11,           // soft colored cloud clusters behind the sky (busy)
@@ -196,7 +196,7 @@
             // heading slides the vanishing point (scaled by z so far rows fan toward the new aim)
             float xw = ((uv.x - 0.5) - uHeading) * aspect * z * 0.6;
             float yw = z + uTime * uScroll;
-            vec2  g  = vec2(xw, yw);
+            vec2  g  = vec2(xw, yw) * 1.5;              // 2/3-size grid cells (finer floor)
             vec2  gf = abs(fract(g) - 0.5);
             vec2  dd = gf / fwidth(g);                 // resolution-independent AA lines
             float line = 1.0 - clamp(min(dd.x, dd.y), 0.0, 1.0);
@@ -533,14 +533,16 @@
         nodes = [];
         for (let i = 0; i < N; i++){
             const ang = Math.random() * Math.PI * 2;
-            const sp  = CONFIG.nodeSpeed * rand(0.4, 1.0);
+            const idleT = rand(CONFIG.nodeSpeed * 0.5, CONFIG.nodeSpeed);   // per-node idle drift target
+            const sp  = idleT;
             nodes.push({
                 x: rand(CONFIG.bandX[0], CONFIG.bandX[1]),
                 y: rand(CONFIG.bandY[0], CONFIG.bandY[1]),
                 vx: Math.cos(ang) * sp,
                 vy: Math.sin(ang) * sp,
                 r: rand(0, 1),                 // size seed; a few become hubs
-                flash: 0
+                flash: 0,
+                idleSpd: idleT, idleTarget: idleT, idleTimer: rand(0, 4)   // sample-and-hold idle speed
             });
         }
         pulses = [];
@@ -574,8 +576,12 @@
             if (n.x > x1){ n.x = x1; n.vx = -Math.abs(n.vx); }
             if (n.y < y0){ n.y = y0; n.vy = Math.abs(n.vy); }
             if (n.y > y1){ n.y = y1; n.vy = -Math.abs(n.vy); }
-            // the mouse can fling nodes fast (up to nodeFleeMax); otherwise they ease back to the slow idle drift
-            const v = Math.hypot(n.vx, n.vy), idle = CONFIG.nodeSpeed;
+            // each node's idle drift wanders between 1/2 and full nodeSpeed via slow sample-and-hold + averaging
+            n.idleTimer -= dt;
+            if (n.idleTimer <= 0){ n.idleTarget = rand(CONFIG.nodeSpeed * 0.5, CONFIG.nodeSpeed); n.idleTimer = rand(2.5, 5.5); }
+            n.idleSpd += (n.idleTarget - n.idleSpd) * (1 - Math.pow(0.5, dt / 1.5));   // smooth toward the held sample
+            // the mouse can fling nodes fast (up to nodeFleeMax); otherwise they ease back to their own idle drift
+            const v = Math.hypot(n.vx, n.vy), idle = n.idleSpd;
             if (v > CONFIG.nodeFleeMax){ const k = CONFIG.nodeFleeMax / v; n.vx *= k; n.vy *= k; }
             else if (v > idle){ const nv = idle + (v - idle) * Math.pow(0.5, dt / 0.7); n.vx *= nv / v; n.vy *= nv / v; }
             n.flash *= Math.pow(0.02, dt);   // ~decay
@@ -693,6 +699,7 @@
 
     const OCTA_V = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
     const OCTA_E = [[0,2],[0,3],[0,4],[0,5],[1,2],[1,3],[1,4],[1,5],[2,4],[2,5],[3,4],[3,5]];
+    const OCTA_MODEL = { V: OCTA_V, E: OCTA_E };   // used when a tumbling polyhedron is shot down
 
     // low-poly starships (nose +z = travel/horizon, wings ±x, fin +y, engines at tail -z)
     // F = triangular hull faces (translucent fill); winding-agnostic (no culling, additive)
@@ -754,12 +761,14 @@
                  nextRidge: 0, nextLightning: 0, nextCapital: 0, nextTurret: 0 };
 
     function buildRidge(){
-        // y-down normalized; horizon is at ~0.60, ridge sits just above it (smaller y)
-        const SEG = 120, pts = new Float32Array(SEG + 1);
-        let h = 0.585;
+        // y-down normalized; horizon at (1 - CONFIG.horizon). Elevations are stored as height
+        // ABOVE the horizon, then converted — roughly twice as tall as the original ridgeline.
+        const SEG = 120, pts = new Float32Array(SEG + 1), hzYD = 1 - CONFIG.horizon;
+        let h = 0.045;                                          // rolling baseline elevation (~2x old)
         for (let i = 0; i <= SEG; i++){
-            h += rand(-0.006, 0.006); h = Math.max(0.555, Math.min(0.595, h));
-            pts[i] = h - 0.018 * (0.5 + 0.5 * Math.sin(i * 0.5));   // occasional peaks
+            h += rand(-0.012, 0.012); h = Math.max(0.028, Math.min(0.090, h));
+            const peak = 0.040 * (0.5 + 0.5 * Math.sin(i * 0.5));   // bigger occasional peaks
+            pts[i] = hzYD - (h + peak);                        // smaller y-down = higher on screen
         }
         pts[SEG] = pts[0];                                   // seamless wrap
         FX.ridge = { pts, scroll: 0, span: 2.0 };
@@ -840,9 +849,9 @@
         }
         // tumbling wireframe polyhedron (mid)
         FX.nextPoly -= dt;
-        if (FX.nextPoly <= 0 && FX.polys.length < 1 && !FX.squad){
+        if (FX.nextPoly <= 0 && FX.polys.length < 1){
             FX.polys.push({ u: -0.15, speed: rand(0.06, 0.10), y: rand(0.20, 0.46),
-                depth: rand(0.45, 0.8), dir: side() ? 1 : -1,
+                depth: rand(0.45, 0.8), dir: side() ? 1 : -1, isPoly: true,
                 rx: rand(0, 6.28), ry: rand(0, 6.28), wx: rand(0.2, 0.5), wy: rand(0.3, 0.6),
                 scale: rand(0.05, 0.09), col: Math.random() < 0.5 ? CONFIG.col.cyan : CONFIG.col.purple });
             FX.nextPoly = rand(CONFIG.polyGap[0], CONFIG.polyGap[1]);
@@ -926,18 +935,34 @@
                 const uvy = (CONFIG.horizon + cam.pitchSend) - 0.20 / zc + h * inv;   // y-up
                 return { on: uvx > 0 && uvx < 1 && uvy > 0 && uvy < 1, uvx };
             };
+            // back-project a sky screen point to a world aim point at a chosen depth (for the polyhedra)
+            const skyToWorld = (uvx, uvyUp, z) => {
+                const inv = 1 / (z * 0.6);
+                return { x: (uvx - 0.5 - cam.headSend) * aspB / inv,
+                         h: (uvyUp - (CONFIG.horizon + cam.pitchSend) + 0.20 / z) / inv, z };
+            };
             // everything currently visible on screen is a valid target (no cone — anything they can see)
             const targets = [];
             for (const tr of FX.transits){
                 if (tr.dead || tr.z < 2.5) continue;
                 const v = onScr(tr.x, tr.z, tr.h);
                 if (!v.on || v.uvx < 0.1 || v.uvx > 0.9) continue;    // transits: only once >=10% onto the screen
-                targets.push({ obj: tr, acc: CONFIG.boltAccuracy, vx: tr.ovx, vy: tr.ovy, vz: tr.ovz - gsB });
+                targets.push({ obj: tr, ax: tr.x, ah: tr.h, az: tr.z, vx: tr.ovx, vy: tr.ovy, vz: tr.ovz - gsB, acc: CONFIG.boltAccuracy });
             }
             if (cap && !cap.dead && cap.onScreen)
-                targets.push({ obj: cap, acc: CONFIG.capHitChance, vx: cap.ovx, vy: cap.ovy, vz: cap.ovz });
-            if (FX.turret && onScr(FX.turret.x, FX.turret.z, FX.turret.h).on)
-                targets.push({ obj: FX.turret, acc: CONFIG.boltAccuracy, vx: 0, vy: 0, vz: -gsB });
+                targets.push({ obj: cap, ax: cap.x, ah: cap.h, az: cap.z, vx: cap.ovx, vy: cap.ovy, vz: cap.ovz, acc: CONFIG.capHitChance });
+            if (FX.turret && onScr(FX.turret.x, FX.turret.z, FX.turret.h).on){
+                const tu = FX.turret;
+                targets.push({ obj: tu, ax: tu.x, ah: tu.h, az: tu.z, vx: 0, vy: 0, vz: -gsB, acc: CONFIG.boltAccuracy });
+            }
+            for (const p of FX.polys){                                // tumbling polyhedra (mapped from sky to world)
+                if (p.dead) continue;
+                const path = p.dir > 0 ? (-0.2 + 1.4 * p.u) : (1.2 - 1.4 * p.u);
+                const ox = path + cam.headSend * (0.04 + p.depth * 0.10);
+                if (ox < 0.06 || ox > 0.94) continue;                 // only while comfortably on screen
+                const w = skyToWorld(ox, 1 - p.y, 6 + p.depth * 6);
+                targets.push({ obj: p, ax: w.x, ah: w.h, az: w.z, vx: 0, vy: 0, vz: 0, acc: CONFIG.boltAccuracy });
+            }
 
             // every on-screen squad member fires independently (all may fire at once), at a random visible target
             for (const sh of sq.ships){
@@ -947,9 +972,9 @@
                 if (sh.fireCool > 0) continue;
                 sh.fireCool = CONFIG.blastCooldown;
                 if (Math.random() >= CONFIG.blastFireProb) continue;
-                const ts = targets[Math.random() * targets.length | 0], o = ts.obj;
+                const ts = targets[Math.random() * targets.length | 0];
                 const Sxy = CONFIG.shipScale * sh.scaleMul, from = { x: sh.wx, h: sh.wh, z: sh.wz };  // muzzle at the ship
-                fireVolley(from, Sxy * 0.45, leadAim(from, o.x, o.h, o.z, ts.vx, ts.vy, ts.vz), o, 'ally', CY, ts.acc);
+                fireVolley(from, Sxy * 0.45, leadAim(from, ts.ax, ts.ah, ts.az, ts.vx, ts.vy, ts.vz), ts.obj, 'ally', CY, ts.acc);
             }
         }
 
@@ -1027,6 +1052,11 @@
                                 FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]);
                             }
                         }
+                    } else if (tg.isPoly){                          // formation -> tumbling polyhedron: big blast
+                        if (Math.random() < b.acc){
+                            tg.dead = true;
+                            detonate(b.tx, b.ty, b.tz, OCTA_MODEL, tg.rx, tg.ry, 0, 1.6, 4, tg.col);
+                        }
                     } else if (Math.random() < b.acc){              // formation -> transit
                         tg.dead = true;
                         detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
@@ -1043,7 +1073,7 @@
             o.x += o.vx * dt; o.y += o.vy * dt; if (o.x < -0.2 || o.x > 1.2) arr.splice(i, 1); } };
         adv(FX.stars); adv(FX.comets); adv(FX.glyphs);
         for (let i = FX.polys.length - 1; i >= 0; i--){ const p = FX.polys[i];
-            p.u += p.speed * dt; p.rx += p.wx * dt; p.ry += p.wy * dt; if (p.u >= 1.15) FX.polys.splice(i, 1); }
+            p.u += p.speed * dt; p.rx += p.wx * dt; p.ry += p.wy * dt; if (p.dead || p.u >= 1.15) FX.polys.splice(i, 1); }
         for (let i = FX.cycles.length - 1; i >= 0; i--){ const c = FX.cycles[i];
             c.u += c.speed * dt; if (c.u >= 1) FX.cycles.splice(i, 1); }
 
@@ -1223,7 +1253,7 @@
                 slot: s, lead: !!s.lead, phase: i * 1.3,
                 model: Math.random() * SHIP_MODELS.length | 0,   // random ship variation
                 col: s.lead ? CONFIG.col.hot : CONFIG.col.cyan,
-                scaleMul: (s.lead ? 1.25 : 1.0) * rand(0.8, 1.2),   // +/-20% per-ship size variation
+                scaleMul: (s.lead ? 1.25 : 1.0) * rand(0.8, 1.2) * 0.5,   // half size + /-20% per-ship variation
                 arriveAt: arriveAt[i], arrDur: ARR_DUR, departAt: departAt[i], depDur: DEP_DUR,
                 edx, edz, edh, fireCool: Math.random() * CONFIG.blastCooldown,   // desynced so they don't volley in lockstep
             };
@@ -1288,15 +1318,20 @@
             pushPt(px, st.y, (1.4 + 1.8 * st.depth) * dprNow, st.col[0]*tw, st.col[1]*tw, st.col[2]*tw);
         }
 
-        // --- distant ridge (dim, far, parallax-slow; does NOT bloom) ---
+        // --- distant ridge (taller, glowing mountain mass + bright ridgeline) ---
         if (FX.ridge && FX.ridgeAmt > 0.01){
             const R = FX.ridge, SEG = R.pts.length - 1, base = R.scroll + cam.headSend * 0.04;
-            const c = CONFIG.col.purple, b = 0.34 * FX.ridgeAmt;
+            const c = CONFIG.col.purple, amt = FX.ridgeAmt, b = 0.85 * amt, fb = 0.34 * amt;
+            const hz = (1 - CONFIG.horizon) - cam.pitchSend;     // horizon line (y-down)
             for (let i = 0; i < SEG; i++){
                 let x0 = (i / SEG) * R.span - base, x1 = ((i + 1) / SEG) * R.span - base;
                 x0 = ((x0 % 1) + 1) % 1; x1 = ((x1 % 1) + 1) % 1;
                 if (Math.abs(x1 - x0) > 0.5) continue;       // skip wrap seam
-                pushLineN(x0, R.pts[i] - cam.pitchSend, x1, R.pts[i + 1] - cam.pitchSend, b, c);
+                const y0 = R.pts[i] - cam.pitchSend, y1 = R.pts[i + 1] - cam.pitchSend;
+                // glowing mountain body: fill the silhouette down to the horizon
+                pushTriClip(cx(x0), cy(y0), cx(x1), cy(y1), cx(x1), cy(hz), fb, c);
+                pushTriClip(cx(x0), cy(y0), cx(x1), cy(hz), cx(x0), cy(hz), fb, c);
+                pushLineN(x0, y0, x1, y1, b, c);             // bright ridgeline crest
             }
         }
 
@@ -1339,6 +1374,7 @@
 
         // --- tumbling wireframe polyhedra (mid, glowing edges) ---
         for (const p of FX.polys){
+            if (p.dead) continue;
             const path = p.dir > 0 ? (-0.2 + 1.4 * p.u) : (1.2 - 1.4 * p.u);
             const ox = path + cam.headSend * (0.04 + p.depth * 0.10), oy = p.y;
             const cxr = Math.cos(p.rx), sxr = Math.sin(p.rx), cyr = Math.cos(p.ry), syr = Math.sin(p.ry);
