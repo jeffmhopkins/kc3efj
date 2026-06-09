@@ -613,7 +613,7 @@
                 const dx = n.x - mouse.x, dy = n.y - mouse.y;
                 const d = Math.hypot(dx, dy);
                 if (d < CONFIG.mouseRepel && d > 1e-4){
-                    const f = (1 - d / CONFIG.mouseRepel) * 0.025;   // 1/4 of the previous repel strength
+                    const f = (1 - d / CONFIG.mouseRepel) * 0.00625;   // 1/4 again (was 0.025)
                     n.vx += (dx / d) * f * dt * 60;
                     n.vy += (dy / d) * f * dt * 60;
                 }
