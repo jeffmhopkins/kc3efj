@@ -1323,15 +1323,21 @@
             const R = FX.ridge, SEG = R.pts.length - 1, base = R.scroll + cam.headSend * 0.04;
             const c = CONFIG.col.purple, amt = FX.ridgeAmt, b = 0.226 * amt, fb = 0.34 * amt;   // crest line dimmed to 2/3
             const hz = (1 - CONFIG.horizon) - cam.pitchSend;     // horizon line (y-down)
+            const seg = (sx0, sy0, sx1, sy1) => {                // one ridge span: filled body + crest line
+                pushTriClip(cx(sx0), cy(sy0), cx(sx1), cy(sy1), cx(sx1), cy(hz), fb, c);
+                pushTriClip(cx(sx0), cy(sy0), cx(sx1), cy(hz), cx(sx0), cy(hz), fb, c);
+                pushLineClip(cx(sx0), cy(sy0), cx(sx1), cy(sy1), b, c);
+            };
             for (let i = 0; i < SEG; i++){
-                let x0 = (i / SEG) * R.span - base, x1 = ((i + 1) / SEG) * R.span - base;
-                x0 = ((x0 % 1) + 1) % 1; x1 = ((x1 % 1) + 1) % 1;
-                if (Math.abs(x1 - x0) > 0.5) continue;       // skip wrap seam
+                let x0 = ((((i / SEG) * R.span - base) % 1) + 1) % 1;
+                let x1 = (((((i + 1) / SEG) * R.span - base) % 1) + 1) % 1;
                 const y0 = R.pts[i] - cam.pitchSend, y1 = R.pts[i + 1] - cam.pitchSend;
-                // glowing mountain body: fill the silhouette down to the horizon
-                pushTriClip(cx(x0), cy(y0), cx(x1), cy(y1), cx(x1), cy(hz), fb, c);
-                pushTriClip(cx(x0), cy(y0), cx(x1), cy(hz), cx(x0), cy(hz), fb, c);
-                pushLineN(x0, y0, x1, y1, b, c);             // bright ridgeline crest
+                if (Math.abs(x1 - x0) > 0.5){                // wrap seam: draw BOTH edge pieces (GL clips them) so no gap
+                    if (x0 > x1){ seg(x0, y0, x1 + 1, y1); seg(x0 - 1, y0, x1, y1); }
+                    else        { seg(x0, y0, x1 - 1, y1); seg(x0 + 1, y0, x1, y1); }
+                } else {
+                    seg(x0, y0, x1, y1);
+                }
             }
         }
 
