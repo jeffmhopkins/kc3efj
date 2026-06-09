@@ -814,19 +814,50 @@
     ];
 
     // huge capital ship (own renderer): long wedge hull + bridge tower + ventral fin + running lights
-    const CAPITAL_MODEL = {
-        V: [[0,0,2.4],[0.6,0.12,0.6],[-0.6,0.12,0.6],[0.6,-0.12,0.6],[-0.6,-0.12,0.6],
-            [0.75,0.14,-1.6],[-0.75,0.14,-1.6],[0.75,-0.14,-1.6],[-0.75,-0.14,-1.6],
-            [0,0.5,-0.8],[0.2,0.16,-0.4],[-0.2,0.16,-0.4],[0,-0.4,-0.9]],
-        E: [[0,1],[0,2],[0,3],[0,4],[1,2],[3,4],[1,3],[2,4],
-            [1,5],[2,6],[3,7],[4,8],[5,6],[7,8],[5,7],[6,8],
-            [10,9],[11,9],[10,11],[9,5],[9,6],[12,7],[12,8]],
-        F: [[1,5,6],[1,6,2],[3,4,8],[3,8,7],[1,3,7],[1,7,5],[2,6,8],[2,8,4],
-            [0,1,2],[0,3,4],[0,1,3],[0,2,4],[9,10,11]],
-        ENG: [[0.4,0,-1.6],[-0.4,0,-1.6],[0,0.05,-1.6]],
-        LIGHTS: [1,2,3,4,5,6,7,8,9] };
-    // two stubby dual-barrel turret hardpoints on the dorsal spine — one forward, one aft (track their target)
-    const CAP_HARDPOINTS = [[0, 0.30, 1.05], [0, 0.34, -0.95]];
+    // three capital-ship variants (same ominous red); each carries its own engines, running lights,
+    // and two stubby dual-barrel turret hardpoints (forward + aft on the dorsal spine) that track a target.
+    const CAPITAL_MODELS = [
+        { // 0 — Arrowhead dreadnought (the original)
+          V: [[0,0,2.4],[0.6,0.12,0.6],[-0.6,0.12,0.6],[0.6,-0.12,0.6],[-0.6,-0.12,0.6],
+              [0.75,0.14,-1.6],[-0.75,0.14,-1.6],[0.75,-0.14,-1.6],[-0.75,-0.14,-1.6],
+              [0,0.5,-0.8],[0.2,0.16,-0.4],[-0.2,0.16,-0.4],[0,-0.4,-0.9]],
+          E: [[0,1],[0,2],[0,3],[0,4],[1,2],[3,4],[1,3],[2,4],
+              [1,5],[2,6],[3,7],[4,8],[5,6],[7,8],[5,7],[6,8],
+              [10,9],[11,9],[10,11],[9,5],[9,6],[12,7],[12,8]],
+          F: [[1,5,6],[1,6,2],[3,4,8],[3,8,7],[1,3,7],[1,7,5],[2,6,8],[2,8,4],
+              [0,1,2],[0,3,4],[0,1,3],[0,2,4],[9,10,11]],
+          ENG: [[0.4,0,-1.6],[-0.4,0,-1.6],[0,0.05,-1.6]],
+          LIGHTS: [1,2,3,4,5,6,7,8,9],
+          HARDPOINTS: [[0,0.30,1.05],[0,0.34,-0.95]] },
+        { // 1 — Spinal battlecruiser: long slim prow, lateral sponsons, twin tail fins
+          V: [[0,0.0,2.6],[0,0.18,1.4],[0.30,0.0,1.2],[-0.30,0.0,1.2],
+              [0.32,0.14,0.2],[-0.32,0.14,0.2],[0.32,-0.14,0.2],[-0.32,-0.14,0.2],
+              [0.85,0.0,-0.3],[-0.85,0.0,-0.3],
+              [0.34,0.16,-1.7],[-0.34,0.16,-1.7],[0.34,-0.16,-1.7],[-0.34,-0.16,-1.7],
+              [0.22,0.55,-1.3],[-0.22,0.55,-1.3]],
+          E: [[0,1],[0,2],[0,3],[1,2],[1,3],[2,3],[2,4],[3,5],[2,6],[3,7],[1,4],[1,5],
+              [4,5],[6,7],[4,6],[5,7],[4,8],[6,8],[5,9],[7,9],
+              [4,10],[5,11],[6,12],[7,13],[10,11],[12,13],[10,12],[11,13],
+              [10,14],[4,14],[11,15],[5,15],[14,15],[8,10],[8,12],[9,11],[9,13]],
+          F: [[0,1,2],[0,3,1],[1,4,5],[2,4,6],[3,5,7],[4,10,5],[5,10,11],[6,12,7],
+              [7,12,13],[10,11,12],[11,13,12],[4,8,6],[5,9,7]],
+          ENG: [[0.34,0,-1.7],[-0.34,0,-1.7],[0,0,-1.7]],
+          LIGHTS: [1,2,3,8,9,10,11,14,15],
+          HARDPOINTS: [[0,0.34,0.85],[0,0.42,-1.05]] },
+        { // 2 — Hammerhead carrier: wide flat bow bar, conning tower, broad stern
+          V: [[0.9,0.0,1.6],[-0.9,0.0,1.6],[0.5,0.10,1.7],[-0.5,0.10,1.7],[0,0.0,1.2],
+              [0.6,0.12,0.2],[-0.6,0.12,0.2],[0.6,-0.10,0.2],[-0.6,-0.10,0.2],
+              [0,0.45,-0.2],
+              [0.55,0.12,-1.7],[-0.55,0.12,-1.7],[0.55,-0.10,-1.7],[-0.55,-0.10,-1.7]],
+          E: [[0,2],[2,4],[4,3],[3,1],[0,4],[1,4],[0,1],[2,5],[3,6],[0,5],[1,6],[4,5],[4,6],
+              [5,6],[7,8],[5,7],[6,8],[5,9],[6,9],[10,9],[11,9],
+              [5,10],[6,11],[7,12],[8,13],[10,11],[12,13],[10,12],[11,13]],
+          F: [[0,2,4],[1,4,3],[0,4,1],[2,5,4],[3,4,6],[5,6,9],[5,9,10],[6,11,9],
+              [5,10,11],[5,11,6],[7,12,8],[8,12,13]],
+          ENG: [[0.5,0,-1.7],[-0.5,0,-1.7],[0,0,-1.7]],
+          LIGHTS: [0,1,2,3,9,10,11],
+          HARDPOINTS: [[0,0.26,0.75],[0,0.34,-1.0]] }
+    ];
 
     // low-poly light-car: sleek wedge, nose +z (travel), canopy ridge, wide low body
     const CAR_MODEL = {
@@ -1149,8 +1180,9 @@
                             return { x: cap.x + x*capSxy, h: cap.h + y*capSxy, z: cap.z + z*capSz };
                         };
                         // both hardpoints fire at once → 4 bolts, each a dual barrel ("pow-pow"); only one bolt stays decisive
-                        fireVolley(hpWorld(CAP_HARDPOINTS[0]), capSxy * 0.10, cap.aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy, null, true,  0.05);
-                        fireVolley(hpWorld(CAP_HARDPOINTS[1]), capSxy * 0.10, cap.aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy, null, false, 0.05);
+                        const HP = CAPITAL_MODELS[cap.cm].HARDPOINTS;
+                        fireVolley(hpWorld(HP[0]), capSxy * 0.10, cap.aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy, null, true,  0.05);
+                        fireVolley(hpWorld(HP[1]), capSxy * 0.10, cap.aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy, null, false, 0.05);
                     }
                 }
             } else cap.aim = null;
@@ -1207,7 +1239,7 @@
                         hit = true;
                         if (tg.cap){
                             tg.dead = true;
-                            detonate(tg.x, tg.h, tg.z, CAPITAL_MODEL, tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 5, CAPC);
+                            detonate(tg.x, tg.h, tg.z, CAPITAL_MODELS[tg.cm], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 5, CAPC);
                             FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]);
                         } else if (tg.isTurret){
                             const gg = Math.min(12, tg.z);
@@ -1221,7 +1253,7 @@
                         hit = true;                                 // never glances off / flies past the capital
                         if (Math.random() < b.acc && --tg.hp <= 0){ // accuracy only decides whether it chips HP
                             tg.dead = true;
-                            detonate(tg.x, tg.h, tg.z, CAPITAL_MODEL, tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 4, CAPC);
+                            detonate(tg.x, tg.h, tg.z, CAPITAL_MODELS[tg.cm], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 4, CAPC);
                             FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]);
                         }
                     } else if (tg.isTurret){                        // indestructible: EVERY shot lands an ineffective hit (sparks, never passes through)
@@ -1347,6 +1379,7 @@
         const Sxy = CONFIG.shipScale * scaleMul;
         const h = 0.4 * Sxy + rand(0.2, 0.7);                         // lift it so the whole hull is above the horizon
         return { x: dir > 0 ? -span : span, z, h, dir, ovx, ovz, ovy, cap: true,
+            cm: Math.random() * CAPITAL_MODELS.length | 0,           // which hull variant
             yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
             pitch: -Math.asin(ovy / vmag), roll: -dir * rand(0.05, 0.16),
             scaleMul, lights: 0,
@@ -1884,7 +1917,7 @@
 
         // --- capital-ship flyby (huge translucent ominous dreadnought near the horizon) ---
         if (FX.capital && !FX.capital.dead){
-            const c = FX.capital, M = CAPITAL_MODEL, OM = CONFIG.col.cap;
+            const c = FX.capital, M = CAPITAL_MODELS[c.cm], OM = CONFIG.col.cap;
             const Sxy = CONFIG.shipScale * c.scaleMul, Sz = Sxy * 0.6;
             const cr = Math.cos(c.roll), sr = Math.sin(c.roll);
             const cp = Math.cos(c.pitch || 0), spp = Math.sin(c.pitch || 0);
@@ -1913,7 +1946,7 @@
                 // two stubby dual-barrel turrets (fore + aft) that TRACK the capital's target like the ground turret
                 const hpSepW = Sxy * 0.12, stub = Sxy * 0.30;   // short, fat barrels
                 const fwdW = rot([0, 0, 1]);                    // ship-forward (rest pose when no target)
-                for (const hp of CAP_HARDPOINTS){
+                for (const hp of M.HARDPOINTS){
                     const r = rot(hp);
                     const mx = c.x + r[0]*Sxy, mz = c.z + r[2]*Sz, mh = c.h + r[1]*Sxy;   // mount world pos
                     const mP = projectWorld(mx, mz, mh, aspect);
