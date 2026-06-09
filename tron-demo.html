@@ -973,7 +973,7 @@
         return { x, z, h: 0, isTurret: true, target: null, switchCool: 0, fireCool: CONFIG.turretFireGap, shotCool: 0, aim: { x, h: 0.2, z: z + 1 } };
     }
 
-    function updateFX(dt){
+    function updateFX(dt, tSec){
         if (reduced) return;
         const side = () => Math.random() < 0.5;
 
@@ -1230,6 +1230,11 @@
             b.age += dt;
             const u = b.T > 1e-3 ? b.age / b.T : 1;
             b.x = b.x0 + (b.tx - b.x0) * u; b.y = b.y0 + (b.ty - b.y0) * u; b.z = b.z0 + (b.tz - b.z0) * u;
+            // collide with the grid floor / side mountains — a bolt that dips below the surface stops there
+            if (b.z > 0.5){
+                const th = terrainH(b.x, b.z, tSec);
+                if (b.y <= th - 0.004){ sparkBurst(b.x, th, b.z, 5); FX.bolts.splice(i, 1); continue; }
+            }
             if (u >= 1 && !b.resolved){
                 b.resolved = true;
                 const tg = b.target;
@@ -1410,6 +1415,29 @@
             const spd = rand(1.0, 2.8), lifeT = rand(0.5, 1.1);
             FX.embers.push({ x, y, z, vx: sphi*Math.cos(th)*spd, vy: cphi*spd*0.5 + rand(0.2,0.6), vz: sphi*Math.sin(th)*spd, life: lifeT, max: lifeT });
         }
+    }
+
+    // JS port of the shader's FS_SCENE terrain (hash/vnoise/terrH) so bolts can collide with the
+    // grid floor (flat valley => 0) and the jagged side mountains. Returns world height at (x, z).
+    function thash(x, y){ const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
+    function tvnoise(x, y){
+        const ix = Math.floor(x), iy = Math.floor(y);
+        let fx = x - ix, fy = y - iy;
+        fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+        const a = thash(ix, iy), b = thash(ix + 1, iy), c = thash(ix, iy + 1), d = thash(ix + 1, iy + 1);
+        const m0 = a + (b - a) * fx, m1 = c + (d - c) * fx;
+        return m0 + (m1 - m0) * fy;
+    }
+    function terrainH(x, z, tSec){
+        const ax = Math.abs(x);
+        let s = (ax - 2.3) / 4.7; s = s < 0 ? 0 : s > 1 ? 1 : s;   // smoothstep(2.3, 7.0, ax)
+        const side = s * s * (3 - 2 * s);
+        if (side <= 0.001) return 0;
+        const yw = z + tSec * (reduced ? 0 : CONFIG.gridScroll);
+        const n = tvnoise(ax * 0.45, yw * 0.40) * 0.6
+                + tvnoise(ax * 1.10, yw * 0.95) * 0.28
+                + tvnoise(ax * 2.60, yw * 2.20) * 0.12;
+        return side * n * (0.7 + ax * 0.18);
     }
 
     // lead-prediction intercept point ({x,h,z}) for a target moving at (vx,vy,vz) from a muzzle `from`
@@ -2202,7 +2230,7 @@
         lastSim = now;
         const tSec = (now - start) / 1000;
         updateSim(dt);
-        updateFX(dt);
+        updateFX(dt, tSec);
         render(tSec);
     }
 
