@@ -66,7 +66,8 @@
         nodeCount:     90,        // network nodes (mid laptop comfortable)
         nodeCountMob:  55,
         linkDist:      0.17,      // link threshold, fraction of min dimension
-        nodeSpeed:     0.018,     // normalized units / second
+        nodeSpeed:     0.004,     // idle drift speed (normalized units/sec) — slow; the mouse can fling them faster
+        nodeFleeMax:   0.090,     // max speed while fleeing the mouse
         mouseRepel:    0.12,      // repel radius (normalized)
 
         bandY:         [0.08, 0.55], // node field band — kept above the horizon (~0.60 y-down)
@@ -562,7 +563,7 @@
                 const dx = n.x - mouse.x, dy = n.y - mouse.y;
                 const d = Math.hypot(dx, dy);
                 if (d < CONFIG.mouseRepel && d > 1e-4){
-                    const f = (1 - d / CONFIG.mouseRepel) * 0.06;
+                    const f = (1 - d / CONFIG.mouseRepel) * 0.10;
                     n.vx += (dx / d) * f * dt * 60;
                     n.vy += (dy / d) * f * dt * 60;
                 }
@@ -573,9 +574,10 @@
             if (n.x > x1){ n.x = x1; n.vx = -Math.abs(n.vx); }
             if (n.y < y0){ n.y = y0; n.vy = Math.abs(n.vy); }
             if (n.y > y1){ n.y = y1; n.vy = -Math.abs(n.vy); }
-            // velocity damping toward base speed so repel doesn't accumulate
-            const v = Math.hypot(n.vx, n.vy), base = CONFIG.nodeSpeed * 0.8;
-            if (v > base * 2.2){ n.vx *= 0.96; n.vy *= 0.96; }
+            // the mouse can fling nodes fast (up to nodeFleeMax); otherwise they ease back to the slow idle drift
+            const v = Math.hypot(n.vx, n.vy), idle = CONFIG.nodeSpeed;
+            if (v > CONFIG.nodeFleeMax){ const k = CONFIG.nodeFleeMax / v; n.vx *= k; n.vy *= k; }
+            else if (v > idle){ const nv = idle + (v - idle) * Math.pow(0.5, dt / 0.7); n.vx *= nv / v; n.vy *= nv / v; }
             n.flash *= Math.pow(0.02, dt);   // ~decay
         }
 
