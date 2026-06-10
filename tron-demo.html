@@ -1196,8 +1196,9 @@
                         };
                         // both hardpoints fire at once → 4 bolts, each a dual barrel ("pow-pow"); only one bolt stays decisive
                         const HP = CAPITAL_MODELS[cap.cm].HARDPOINTS;
-                        fireVolley(hpWorld(HP[0]), capSxy * 0.10, cap.aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy, null, true,  0.05);
-                        fireVolley(hpWorld(HP[1]), capSxy * 0.10, cap.aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy, null, false, 0.05);
+                        const capAcc = tgt.slot ? CONFIG.capAccuracy * 1.3 : CONFIG.capAccuracy;   // 30% deadlier vs squad fighters
+                        fireVolley(hpWorld(HP[0]), capSxy * 0.10, cap.aim, tgt, 'enemy', CAPC, capAcc, null, true,  0.05);
+                        fireVolley(hpWorld(HP[1]), capSxy * 0.10, cap.aim, tgt, 'enemy', CAPC, capAcc, null, false, 0.05);
                     }
                 }
             } else cap.aim = null;
@@ -1476,11 +1477,11 @@
             decisive: true, kind: 'ally', col: CONFIG.col.orange, acc: 1, missile: true, shooter: shooter || null });
     }
 
-    // a squad member earns a missile after TWO target kills while on stage (a polyhedron kill grants one outright)
+    // a squad member earns a missile after THREE target kills while on stage (a polyhedron kill grants one outright)
     function creditKill(sh){
         if (!sh) return;
         sh.kills = (sh.kills || 0) + 1;
-        if (sh.kills >= 2){ sh.hasMissile = true; sh.kills = 0; }
+        if (sh.kills >= 3){ sh.hasMissile = true; sh.kills = 0; }
     }
 
     // project a world point (lateral xw, forward z, height above grid) to clip space,
