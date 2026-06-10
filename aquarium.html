@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#05010d">
+<title>NEON REEF — Synthwave Low-Poly Aquarium</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#05010d; cursor:none; }
+  #c { display:block; width:100vw; height:100vh; }
+  #ui {
+    position:fixed; left:14px; bottom:12px; z-index:10;
+    font:11px/1.5 'Courier New', monospace; color:#2de2e6;
+    text-shadow:0 0 6px #2de2e6; letter-spacing:.5px;
+    opacity:.55; transition:opacity .6s; user-select:none; pointer-events:none;
+  }
+  #ui b { color:#ff2a6d; text-shadow:0 0 6px #ff2a6d; }
+  #snd {
+    position:fixed; right:14px; bottom:12px; z-index:10; cursor:pointer;
+    font:11px/1 'Courier New', monospace; color:#b967ff;
+    text-shadow:0 0 6px #b967ff; opacity:.6; transition:opacity .3s;
+    border:1px solid #b967ff60; border-radius:4px; padding:6px 9px;
+    background:rgba(20,4,40,.4); user-select:none;
+  }
+  #snd:hover { opacity:1; }
+  body.idle #ui, body.idle #snd { opacity:0; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">NEON&nbsp;REEF&nbsp;&nbsp;·&nbsp;&nbsp;synthwave low-poly aquarium&nbsp;&nbsp;·&nbsp;&nbsp;<b>just breathe</b></div>
+<div id="snd">♪ sound: off</div>
+<script>
+"use strict";
+/* ============================================================================
+   NEON REEF — a self-contained synthwave / Tron low-poly 3D aquarium.
+   Hand-rolled flat-shaded software renderer (Star Fox SNES vibe):
+   3D verts -> camera space -> perspective projection -> painter's sort.
+   Built from 50 brainstormed concepts (color, geometry, motion, scene, mood).
+   ============================================================================ */
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha:false });
+let W = 0, H = 0, DPR = 1, focal = 1, cx = 0, cy = 0;
+
+function resize(){
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width  = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  focal = H * 0.95;          // field of view scaling
+  cx = W * 0.5; cy = H * 0.5;
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ----------------------------------------------------------------- helpers */
+const TAU = Math.PI * 2;
+const rnd  = (a=1, b) => b===undefined ? Math.random()*a : a + Math.random()*(b-a);
+const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
+const lerp  = (a, b, t) => a + (b - a) * t;
+const mod   = (n, m) => ((n % m) + m) % m;
+
+// short-arc lerp for angles
+function lerpAngle(a, b, t){
+  let d = mod(b - a + Math.PI, TAU) - Math.PI;
+  return a + d * t;
+}
+
+/* ------------------------------------------------------------ scene volume */
+// Fish swim inside this world box. +z = into the screen (away from camera).
+const BOX = { x:42, yTop:16, yBot:-15, zNear:6, zFar:62 };
+const FLOOR_Y = BOX.yBot - 1;
+
+/* ------------------------------------------------------------------ camera */
+// Slowly drifting Lissajous camera that never holds still (concept: drift).
+const cam = { pos:[0,1,-30], tgt:[0,0,26] };
+const view = { r:[1,0,0], u:[0,1,0], f:[0,0,1] };
+
+function buildView(){
+  // forward
+  let fx = cam.tgt[0]-cam.pos[0], fy = cam.tgt[1]-cam.pos[1], fz = cam.tgt[2]-cam.pos[2];
+  let fl = Math.hypot(fx,fy,fz) || 1; fx/=fl; fy/=fl; fz/=fl;
+  // right = forward × worldUp(0,1,0) = (-fz, 0, fx)
+  let rx = -fz, ry = 0, rz = fx;
+  let rl = Math.hypot(rx,ry,rz) || 1; rx/=rl; ry/=rl; rz/=rl;
+  // up = right × forward
+  let ux = ry*fz - rz*fy, uy = rz*fx - rx*fz, uz = rx*fy - ry*fx;
+  view.r=[rx,ry,rz]; view.u=[ux,uy,uz]; view.f=[fx,fy,fz];
+}
+
+// world point -> {x,y (screen), z (camera depth), vis}
+function project(p){
+  const dx = p[0]-cam.pos[0], dy = p[1]-cam.pos[1], dz = p[2]-cam.pos[2];
+  const x = dx*view.r[0] + dy*view.r[1] + dz*view.r[2];
+  const y = dx*view.u[0] + dy*view.u[1] + dz*view.u[2];
+  const z = dx*view.f[0] + dy*view.f[1] + dz*view.f[2];
+  if (z < 0.4) return { vis:false };
+  const inv = focal / z;
+  return { vis:true, x: cx + x*inv, y: cy - y*inv, z, inv };
+}
+
+/* ----------------------------------------------------------------- palette */
+// Curated synthwave palettes; we slowly cross-fade between them (mood drift).
+const PALETTES = [
+  { name:'magenta dusk', accents:[330, 186, 270, 200], grid:328, sun1:'#ff36b0', sun2:'#ffd23f' },
+  { name:'toxic lagoon', accents:[160, 186, 286, 110], grid:166, sun1:'#19f3b6', sun2:'#7df9ff' },
+  { name:'violet deep',  accents:[270, 300, 210, 320], grid:280, sun1:'#b967ff', sun2:'#ff61dc' },
+  { name:'electric tide',accents:[200, 186, 326, 250], grid:200, sun1:'#01cdfe', sun2:'#05ffa1' },
+];
+let palIdx = 0, palT = 1, palDur = 14;      // cross-fade timer
+let pal = clonePal(PALETTES[0]);
+let palTarget = pal;
+function clonePal(p){ return { name:p.name, accents:p.accents.slice(), grid:p.grid, sun1:p.sun1, sun2:p.sun2 }; }
+let nextPalAt = 95;                          // seconds until first palette change
+let hueShift = 0;                            // continuous slow global hue rotation
+
+function lerpHue(a,b,t){ let d=mod(b-a+180,360)-180; return mod(a+d*t,360); }
+function lerpColor(c1,c2,t){ // hex -> hex
+  const a=hex2rgb(c1), b=hex2rgb(c2);
+  return rgb2hex(lerp(a[0],b[0],t), lerp(a[1],b[1],t), lerp(a[2],b[2],t));
+}
+function hex2rgb(h){ const n=parseInt(h.slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; }
+function rgb2hex(r,g,b){ return '#'+((1<<24)+(Math.round(r)<<16)+(Math.round(g)<<8)+Math.round(b)).toString(16).slice(1); }
+
+/* ----------------------------------------------------------- day/night arc */
+// 0..1 loop over ~10 min: dawn -> noon -> dusk -> deep. Drives sky + ambient.
+let dayPhase = 0.55;
+const DAY_LEN = 600;
+const SKY_KEYS = [ // [top, mid, deep] gradients per phase quarter
+  { p:0.00, top:'#3a1247', mid:'#7a1f6b', deep:'#1a0633' }, // dawn coral
+  { p:0.25, top:'#102a55', mid:'#1f5fa6', deep:'#06203a' }, // noon cyan
+  { p:0.50, top:'#3a0a4e', mid:'#a01f6b', deep:'#1a0233' }, // dusk magenta
+  { p:0.75, top:'#070024', mid:'#16093f', deep:'#03000f' }, // deep indigo
+];
+function skyAt(phase){
+  const n = SKY_KEYS.length;
+  const f = phase*n; const i = Math.floor(f)%n; const t = f-Math.floor(f);
+  const a = SKY_KEYS[i], b = SKY_KEYS[(i+1)%n];
+  return { top:lerpColor(a.top,b.top,t), mid:lerpColor(a.mid,b.mid,t), deep:lerpColor(a.deep,b.deep,t) };
+}
+let ambient = 0.6;
+
+/* =========================================================================
+   LOW-POLY MESH LIBRARY
+   Each mesh: { verts:[[x,y,z]...], faces:[{i:[a,b,c], hue, line, both}],
+                wig:[per-vertex tail-wiggle weight], kind }
+   Fish forward = +z, width = x, height = y.  Flat-shaded, painter-sorted.
+   ========================================================================= */
+
+function fishMesh(scale=[1,1,1]){
+  // 6 belt verts + nose + tail-base + 2 tail-fin tips + dorsal + 2 pectoral
+  const V = [
+    [0,0,1.35],            // 0 nose
+    [0,0,-1.05],           // 1 tail base
+    [0,0.5,0.05],          // 2 top
+    [0,-0.42,0.05],        // 3 bottom
+    [-0.5,0.02,0.05],      // 4 left
+    [0.5,0.02,0.05],       // 5 right
+    [0,0.62,-1.65],        // 6 tail top
+    [0,-0.62,-1.65],       // 7 tail bottom
+    [0,0.85,-0.2],         // 8 dorsal tip
+  ];
+  const F = [
+    // front cone nose->belt
+    {i:[0,2,5]}, {i:[0,5,3]}, {i:[0,3,4]}, {i:[0,4,2]},
+    // rear cone tailbase->belt
+    {i:[1,5,2]}, {i:[1,3,5]}, {i:[1,4,3]}, {i:[1,2,4]},
+    // caudal fin (double sided, flat)
+    {i:[1,6,7], both:true, fin:true},
+    // dorsal fin (double sided)
+    {i:[2,8,1], both:true, fin:true},
+  ];
+  return finishMesh(V, F, scale, 'fish');
+}
+
+function sharkMesh(){
+  const m = fishMesh([0.85, 0.95, 2.15]);
+  m.kind = 'shark';
+  return m;
+}
+function angelMesh(){
+  const m = fishMesh([0.42, 1.75, 0.95]);
+  m.kind = 'angel';
+  return m;
+}
+
+function mantaMesh(){
+  // Flat diamond ray: center spine + swept wings, slight dihedral.
+  const V = [
+    [0,0,1.1],     // 0 head
+    [0,0,-1.4],    // 1 tail root
+    [-2.3,0.12,0], // 2 left tip
+    [2.3,0.12,0],  // 3 right tip
+    [-0.7,0,-1.5], // 4 left trailing
+    [0.7,0,-1.5],  // 5 right trailing
+    [0,-0.05,-3.2],// 6 tail spike
+  ];
+  const F = [
+    {i:[0,2,4], both:true}, {i:[0,4,1], both:true},
+    {i:[0,1,5], both:true}, {i:[0,5,3], both:true},
+    {i:[1,4,6], both:true, line:true}, {i:[1,6,5], both:true, line:true},
+  ];
+  const m = finishMesh(V, F, [1,1,1], 'manta');
+  // wings flap: weight by |x|
+  m.flap = m.verts.map(v => clamp(Math.abs(v[0])/2.3, 0, 1));
+  return m;
+}
+
+function jellyMesh(){
+  // Bell dome: apex + ring of 8; tentacles are line faces hanging down.
+  const seg = 8, r = 0.85, V = [[0,0.7,0]];
+  for (let k=0;k<seg;k++){ const a=k/seg*TAU; V.push([Math.cos(a)*r, 0, Math.sin(a)*r]); }
+  const F = [];
+  for (let k=0;k<seg;k++){ F.push({i:[0, 1+k, 1+(k+1)%seg], both:true}); }
+  // tentacles: lines from each ring vert downward (rendered as line faces)
+  const tent = [];
+  for (let k=0;k<seg;k+=1){
+    const top = 1+k, bx=V[top][0]*0.8, bz=V[top][2]*0.8;
+    const segs = [];
+    for (let s=1;s<=5;s++){ segs.push([bx, -s*0.45, bz]); }
+    tent.push({ top, pts: segs.map(()=>[0,0,0]), base:[bx,bz] });
+  }
+  const m = finishMesh(V, F, [1,1,1], 'jelly');
+  m.tent = tent;
+  m.pulse = 0;
+  return m;
+}
+
+function eelMesh(){
+  // Segmented serpentine body: 7 rings of 4 verts -> traveling sine each frame.
+  const rings = 8, V = [], F = [];
+  for (let r=0;r<rings;r++){
+    const z = 1.5 - r*0.85;
+    const rad = 0.42 * (1 - r/(rings+2)) + 0.08;
+    V.push([0,rad,z],[rad,0,z],[0,-rad,z],[-rad,0,z]);
+  }
+  for (let r=0;r<rings-1;r++){
+    const a=r*4, b=(r+1)*4;
+    for (let s=0;s<4;s++){
+      const s2=(s+1)%4;
+      F.push({i:[a+s, b+s, b+s2]});
+      F.push({i:[a+s, b+s2, a+s2]});
+    }
+  }
+  const m = finishMesh(V, F, [1,1,1], 'eel');
+  m.rings = rings;
+  return m;
+}
+
+function whaleMesh(){
+  // Big gentle low-poly whale silhouette (concept: rare flyby event).
+  const m = fishMesh([3.4, 2.6, 6.5]);
+  m.kind = 'whale';
+  return m;
+}
+
+function finishMesh(V, F, scale, kind){
+  const verts = V.map(v => [v[0]*scale[0], v[1]*scale[1], v[2]*scale[2]]);
+  // tail-wiggle weight: 0 at nose (+z), 1 at tail (-z)
+  let zmin=Infinity, zmax=-Infinity;
+  for (const v of verts){ if(v[2]<zmin)zmin=v[2]; if(v[2]>zmax)zmax=v[2]; }
+  const wig = verts.map(v => clamp((zmax - v[2])/(zmax-zmin+0.001), 0, 1));
+  return { verts, faces:F, wig, kind, scale };
+}
+
+/* =========================================================================
+   CREATURES — swimming agents with boids-lite steering + body animation.
+   ========================================================================= */
+const creatures = [];
+const SPECIES = ['fish','fish','fish','angel','shark','manta','jelly','eel'];
+
+function spawnCreature(kind, opt={}){
+  kind = kind || SPECIES[(Math.random()*SPECIES.length)|0];
+  let mesh;
+  switch(kind){
+    case 'shark': mesh = sharkMesh(); break;
+    case 'angel': mesh = angelMesh(); break;
+    case 'manta': mesh = mantaMesh(); break;
+    case 'jelly': mesh = jellyMesh(); break;
+    case 'eel':   mesh = eelMesh();   break;
+    case 'whale': mesh = whaleMesh(); break;
+    default:      mesh = fishMesh();  kind='fish';
+  }
+  const accents = pal.accents;
+  const c = {
+    kind, mesh,
+    pos: opt.pos || [rnd(-BOX.x,BOX.x), rnd(BOX.yBot+3,BOX.yTop-3), rnd(BOX.zNear+4, BOX.zFar-6)],
+    vel: opt.vel || [rnd(-1,1), rnd(-0.3,0.3), rnd(-1,1)],
+    yaw:0, pitch:0, roll:0,
+    hue: opt.hue!==undefined ? opt.hue : accents[(Math.random()*accents.length)|0] + rnd(-12,12),
+    size: opt.size || ({manta:rnd(2.1,3), shark:rnd(2.4,3.4), jelly:rnd(1.3,2.1), eel:rnd(1.5,2.3), angel:rnd(1.1,1.7), whale:1, fish:rnd(0.9,1.7)}[kind]),
+    speed: opt.speed || ({shark:rnd(7,10), manta:rnd(4,6), jelly:rnd(1.2,2), eel:rnd(4,6), whale:opt.speed||3.2, fish:rnd(4,7), angel:rnd(3,5)}[kind]),
+    maxForce: ({jelly:2, whale:1.5}[kind] || 9),
+    wagFreq: rnd(6, 11),
+    wagPhase: rnd(0, TAU),
+    wagAmp: ({eel:0.55, manta:0, jelly:0, shark:0.22}[kind] ?? 0.32),
+    wander: rnd(0, TAU),
+    dart: 0,
+    scripted: opt.scripted || false,
+    life: opt.life || Infinity,
+    age: 0,
+    fade: 0,            // 0..1 spawn-in
+  };
+  // jelly drifts mostly upward and slow
+  if (kind==='jelly'){ c.vel=[rnd(-0.4,0.4), rnd(0.4,1), rnd(-0.4,0.4)]; }
+  creatures.push(c);
+  return c;
+}
+
+const SOFT_CAP = 24;        // gentle population target (breathing)
+function seedPopulation(){
+  spawnCreature('shark'); spawnCreature('manta');
+  for (let i=0;i<3;i++) spawnCreature('jelly');
+  spawnCreature('eel'); spawnCreature('eel');
+  for (let i=0;i<5;i++) spawnCreature('angel');
+  while (creatures.length < SOFT_CAP) spawnCreature('fish');
+}
+
+// spatial steering: schooling among same-kind 'fish'/'angel', plus global current
+function steer(c, dt){
+  if (c.scripted){ // whale just cruises straight, slight bob
+    c.pos[1] += Math.sin(c.age*0.6)*0.01;
+    return;
+  }
+  const acc=[0,0,0];
+  // --- global slow current field (whole tank breathes) ---
+  const cur = currentField(c.pos, t);
+  acc[0]+=cur[0]; acc[1]+=cur[1]; acc[2]+=cur[2];
+
+  if (c.kind==='jelly'){
+    // pulse-driven gentle upward thrust + slow wander, sink when reaching top
+    c.mesh.pulse += dt;
+    const p = (Math.sin(c.mesh.pulse*1.7)*0.5+0.5);
+    acc[1] += (c.pos[1] > BOX.yTop-3 ? -0.6 : (p>0.85?2.2:0.1));
+    acc[0] += Math.cos(c.wander)*0.4; acc[2]+=Math.sin(c.wander)*0.4;
+    c.wander += rnd(-0.04,0.04);
+  } else {
+    // wander steering (organic meander)
+    c.wander += rnd(-0.5,0.5)*dt*3;
+    const sp = Math.hypot(c.vel[0],c.vel[1],c.vel[2])||1;
+    const hx=c.vel[0]/sp, hy=c.vel[1]/sp, hz=c.vel[2]/sp;
+    acc[0]+= hx*2 + Math.cos(c.wander)*2.5;
+    acc[1]+= hy*1 + Math.sin(c.wander*0.7)*0.8;
+    acc[2]+= hz*2 + Math.sin(c.wander)*2.5;
+
+    // schooling for small fish/angel (boids-lite, O(n^2) over small n)
+    if (c.kind==='fish' || c.kind==='angel'){
+      let nx=0,ny=0,nz=0, ax=0,ay=0,az=0, sx=0,sy=0,sz=0, n=0;
+      for (const o of creatures){
+        if (o===c || o.kind!==c.kind) continue;
+        const dx=o.pos[0]-c.pos[0], dy=o.pos[1]-c.pos[1], dz=o.pos[2]-c.pos[2];
+        const d2=dx*dx+dy*dy+dz*dz;
+        if (d2>0 && d2<100){
+          n++; nx+=o.pos[0]; ny+=o.pos[1]; nz+=o.pos[2];
+          ax+=o.vel[0]; ay+=o.vel[1]; az+=o.vel[2];
+          const d=Math.sqrt(d2); sx-=dx/d; sy-=dy/d; sz-=dz/d;
+        }
+      }
+      if (n>0){
+        acc[0]+=((nx/n-c.pos[0])*0.12 + ax/n*0.6 + sx*4);
+        acc[1]+=((ny/n-c.pos[1])*0.12 + ay/n*0.6 + sy*4);
+        acc[2]+=((nz/n-c.pos[2])*0.12 + az/n*0.6 + sz*4);
+      }
+    }
+    // occasional dart (startle burst, eased)
+    if (c.dart<=0 && Math.random() < 0.0009) c.dart = 0.45;
+  }
+
+  // soft walls: steer back inside the box
+  const m=4;
+  if (c.pos[0]> BOX.x-m) acc[0]-=6; if (c.pos[0]<-BOX.x+m) acc[0]+=6;
+  if (c.pos[1]> BOX.yTop-m) acc[1]-=6; if (c.pos[1]<BOX.yBot+m) acc[1]+=6;
+  if (c.pos[2]> BOX.zFar-m) acc[2]-=6; if (c.pos[2]<BOX.zNear+m) acc[2]+=6;
+
+  // integrate (critically-damped feel)
+  let burst = c.dart>0 ? 3.2 : 1;
+  if (c.dart>0) c.dart-=dt;
+  const k = 2.2;
+  c.vel[0]+= acc[0]*dt*k; c.vel[1]+= acc[1]*dt*k*0.6; c.vel[2]+= acc[2]*dt*k;
+  // clamp speed
+  let sp=Math.hypot(c.vel[0],c.vel[1],c.vel[2])||1;
+  const maxS = c.speed*burst;
+  if (sp>maxS){ const s=maxS/sp; c.vel[0]*=s; c.vel[1]*=s; c.vel[2]*=s; }
+}
+
+function currentField(p, time){
+  const s=0.35;
+  return [
+    Math.cos(time*0.05 + p[1]*0.04)*s,
+    Math.sin(time*0.04 + p[0]*0.03)*s*0.3,
+    Math.sin(time*0.045 + p[0]*0.03)*s,
+  ];
+}
+
+function updateCreature(c, dt){
+  c.age += dt;
+  if (c.fade<1) c.fade = Math.min(1, c.fade + dt/2);
+  steer(c, dt);
+  // move
+  c.pos[0]+=c.vel[0]*dt; c.pos[1]+=c.vel[1]*dt; c.pos[2]+=c.vel[2]*dt;
+  // orientation from velocity (smoothed)
+  const sp=Math.hypot(c.vel[0],c.vel[1],c.vel[2])||1;
+  const tgtYaw = Math.atan2(c.vel[0], c.vel[2]);
+  const tgtPitch = -Math.asin(clamp(c.vel[1]/sp,-1,1)) * (c.kind==='jelly'?0:1);
+  const prevYaw = c.yaw;
+  c.yaw = lerpAngle(c.yaw, tgtYaw, 1-Math.exp(-6*dt));
+  c.pitch = lerpAngle(c.pitch, tgtPitch, 1-Math.exp(-5*dt));
+  // banking roll from turn rate
+  const turn = mod(c.yaw-prevYaw+Math.PI,TAU)-Math.PI;
+  c.roll = lerp(c.roll, clamp(-turn/dt*0.12,-0.6,0.6), 1-Math.exp(-6*dt));
+  if (c.scripted && c.life!==Infinity){
+    if (c.age>c.life) c.fade = -1; // mark for fade-out/remove
+  }
+}
+
+/* ----------------------- per-frame model-space vertex animation ---------- */
+function animVerts(c, time){
+  const m=c.mesh, base=m.verts, out=[];
+  if (c.kind==='jelly'){
+    const p=(Math.sin(m.pulse*1.7)*0.5+0.5);
+    const rx=1+0.22*p, ry=1-0.18*p;
+    for (let k=0;k<base.length;k++){
+      const v=base[k];
+      out.push([ v[0]*rx, k===0? v[1]*(1+0.25*p): v[1]*ry, v[2]*rx ]);
+    }
+    // update tentacle world-ish offsets (model space)
+    for (let ti=0;ti<m.tent.length;ti++){
+      const tt=m.tent[ti], bx=tt.base[0]*rx, bz=tt.base[1]*rx;
+      for (let s=0;s<tt.pts.length;s++){
+        const wob=Math.sin(time*2 - s*0.6 - ti*0.5)*0.12*(s+1);
+        tt.pts[s][0]=bx+wob; tt.pts[s][1]=-(s+1)*0.4; tt.pts[s][2]=bz+Math.cos(time*1.7 - s*0.5)*0.1*(s+1);
+      }
+    }
+    return out;
+  }
+  if (c.kind==='eel'){
+    // traveling serpentine wave along the body rings
+    for (let k=0;k<base.length;k++){
+      const v=base[k], ring=Math.floor(k/4);
+      const wave=Math.sin(time*5 - ring*0.9)*0.55*(ring/m.rings);
+      out.push([ v[0]+wave, v[1], v[2] ]);
+    }
+    return out;
+  }
+  if (c.kind==='manta'){
+    for (let k=0;k<base.length;k++){
+      const v=base[k];
+      const fl=m.flap[k]*Math.sin(time*2.6 + v[0]*0.4)*0.7;
+      out.push([ v[0], v[1]+fl, v[2] ]);
+    }
+    return out;
+  }
+  // generic fish/shark/angel/whale: tail+body wiggle via z-weighted x shear
+  const amp=c.wagAmp;
+  const f=c.wagFreq;
+  for (let k=0;k<base.length;k++){
+    const v=base[k], w=m.wig[k];
+    const dx=Math.sin(time*f + c.wagPhase)*amp*w;
+    out.push([ v[0]+dx, v[1], v[2] ]);
+  }
+  return out;
+}
+
+/* ----------------------------- transform model->world (rot + scale + pos) */
+function modelToWorld(c, mv){
+  const s=c.size;
+  const cy_=Math.cos(c.yaw), sy_=Math.sin(c.yaw);
+  const cp=Math.cos(c.pitch), sp=Math.sin(c.pitch);
+  const cr=Math.cos(c.roll), sr=Math.sin(c.roll);
+  const out=new Array(mv.length);
+  for (let k=0;k<mv.length;k++){
+    let x=mv[k][0]*s, y=mv[k][1]*s, z=mv[k][2]*s;
+    // roll (around z)
+    let x1=x*cr - y*sr, y1=x*sr + y*cr, z1=z;
+    // pitch (around x)
+    let x2=x1, y2=y1*cp - z1*sp, z2=y1*sp + z1*cp;
+    // yaw (around y)
+    let x3=x2*cy_ + z2*sy_, y3=y2, z3=-x2*sy_ + z2*cy_;
+    out[k]=[ x3+c.pos[0], y3+c.pos[1], z3+c.pos[2] ];
+  }
+  return out;
+}
+
+/* =========================================================================
+   RENDER — collect faces from all creatures, depth-sort, draw flat+wire.
+   ========================================================================= */
+const LIGHT = (()=>{ const l=[0.35,0.8,-0.45]; const n=Math.hypot(...l); return l.map(v=>v/n); })();
+let glowOn = true;       // adaptive: disabled if frame time too high
+const faceBuf = [];      // reused each frame
+
+function gatherCreature(c, time){
+  const mv = animVerts(c, time);
+  const wv = modelToWorld(c, mv);
+  const proj = wv.map(project);
+
+  for (const f of c.mesh.faces){
+    const ia=f.i[0], ib=f.i[1], ic=f.i[2];
+    const pa=proj[ia], pb=proj[ib], pc=proj[ic];
+    if (!pa.vis || !pb.vis || !pc.vis) continue;
+    // world normal
+    const a=wv[ia], b=wv[ib], cc=wv[ic];
+    const ux=b[0]-a[0], uy=b[1]-a[1], uz=b[2]-a[2];
+    const vx=cc[0]-a[0], vy=cc[1]-a[1], vz=cc[2]-a[2];
+    let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+    const nl=Math.hypot(nx,ny,nz)||1; nx/=nl; ny/=nl; nz/=nl;
+    // screen-space winding (for cull + consistent normal toward camera)
+    const area=(pb.x-pa.x)*(pc.y-pa.y)-(pb.y-pa.y)*(pc.x-pa.x);
+    if (!f.both && area<=0) continue;        // backface cull
+    let lum = nx*LIGHT[0]+ny*LIGHT[1]+nz*LIGHT[2];
+    if (f.both) lum=Math.abs(lum);
+    lum = clamp(lum,0,1)*ambient + 0.12;
+    const depth=(pa.z+pb.z+pc.z)/3;
+    const hue=mod(c.hue + hueShift, 360);
+    faceBuf.push({ pa,pb,pc, depth, hue, lum, line:f.line, fin:f.fin,
+                   alpha:c.fade*(c.kind==='whale'?0.5:1), kind:c.kind });
+  }
+  // jelly tentacle line segments
+  if (c.kind==='jelly'){
+    for (const tt of c.mesh.tent){
+      const topW = wv[tt.top];
+      let prev = project(topW);
+      const segWorld = modelToWorld(c, tt.pts);
+      for (let s=0;s<segWorld.length;s++){
+        const pp=project(segWorld[s]);
+        if (prev.vis && pp.vis){
+          faceBuf.push({ seg:true, ax:prev.x, ay:prev.y, bx:pp.x, by:pp.y,
+            depth:(prev.z+pp.z)/2, hue:mod(c.hue+hueShift,360), alpha:c.fade*0.7 });
+        }
+        prev=pp;
+      }
+    }
+  }
+}
+
+function drawFaces(){
+  faceBuf.sort((a,b)=>b.depth-a.depth);   // far first (painter)
+  ctx.lineJoin='round';
+  for (const f of faceBuf){
+    if (f.seg){
+      ctx.strokeStyle=`hsla(${f.hue},100%,70%,${f.alpha})`;
+      ctx.lineWidth=1.4;
+      if (glowOn){ ctx.shadowColor=`hsl(${f.hue},100%,60%)`; ctx.shadowBlur=6; }
+      ctx.beginPath(); ctx.moveTo(f.ax,f.ay); ctx.lineTo(f.bx,f.by); ctx.stroke();
+      ctx.shadowBlur=0;
+      continue;
+    }
+    const {pa,pb,pc,hue,lum,alpha}=f;
+    ctx.beginPath();
+    ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.lineTo(pc.x,pc.y); ctx.closePath();
+    if (!f.line){
+      // translucent neon fill, brightness from flat shading
+      const L=Math.round(18+lum*40);
+      ctx.fillStyle=`hsla(${hue},85%,${L}%,${0.34*alpha})`;
+      ctx.fill();
+    }
+    // Tron wireframe edge
+    ctx.strokeStyle=`hsla(${hue},100%,${Math.round(58+lum*18)}%,${alpha})`;
+    ctx.lineWidth=1.3;
+    if (glowOn){ ctx.shadowColor=`hsl(${hue},100%,62%)`; ctx.shadowBlur=7; }
+    ctx.stroke();
+    ctx.shadowBlur=0;
+  }
+}
+
+/* =========================================================================
+   ENVIRONMENT — sky, banded sun, perspective grid, light shafts, particles.
+   ========================================================================= */
+function drawSky(){
+  const sk=skyAt(dayPhase);
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, sk.top);
+  g.addColorStop(0.45, sk.mid);
+  g.addColorStop(0.72, lerpColor(sk.mid, sk.deep, 0.6));
+  g.addColorStop(1, sk.deep);
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+}
+
+function drawSun(){
+  // banded neon sun near the surface; gently breathes vertically.
+  const horizon = cy_screen();
+  const R = Math.min(W,H)*0.17;
+  const sxp = cx + Math.sin(t*0.05)*W*0.04;
+  const syp = horizon - R*0.15 + Math.sin(t*0.12)*8;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(sxp,syp,R,0,TAU); ctx.clip();
+  const g=ctx.createLinearGradient(0,syp-R,0,syp+R);
+  g.addColorStop(0, pal.sun1); g.addColorStop(1, pal.sun2);
+  ctx.fillStyle=g; ctx.fillRect(sxp-R,syp-R,R*2,R*2);
+  // carve horizontal bands (gaps widen downward)
+  const sk=skyAt(dayPhase);
+  ctx.fillStyle=sk.mid;
+  let y=syp-R*0.1, gap=3;
+  while (y<syp+R){ ctx.fillRect(sxp-R, y, R*2, gap*0.7); y+=gap; gap+=1.1; }
+  ctx.restore();
+  // soft halo
+  if (glowOn){
+    const h=ctx.createRadialGradient(sxp,syp,R*0.4, sxp,syp,R*2.1);
+    h.addColorStop(0, pal.sun1+'55'); h.addColorStop(1, '#00000000');
+    ctx.fillStyle=h; ctx.fillRect(sxp-R*2.1,syp-R*2.1,R*4.2,R*4.2);
+  }
+}
+function cy_screen(){ // approximate horizon: project a far floor point
+  const p=project([0,FLOOR_Y, BOX.zFar+40]); return p.vis? p.y : H*0.42;
+}
+
+function drawGrid(){
+  const scroll = mod(t*3.2, 4);     // flow toward viewer
+  ctx.lineWidth=1; ctx.lineJoin='round';
+  const ghue = mod(pal.grid+hueShift,360);
+  // lines parallel to X (vary z) — draw as projected polylines
+  for (let zi=-1; zi<46; zi++){
+    const z = BOX.zNear + zi*4 + scroll;
+    if (z<BOX.zNear-2 || z>BOX.zFar+44) continue;
+    let started=false;
+    ctx.beginPath();
+    for (let xi=-BOX.x; xi<=BOX.x+0.1; xi+=BOX.x){ // just need endpoints, plane is flat
+      const p=project([xi, FLOOR_Y, z]);
+      if (!p.vis){ started=false; continue; }
+      if (!started){ ctx.moveTo(p.x,p.y); started=true; } else ctx.lineTo(p.x,p.y);
+    }
+    const fade=clamp(1-(z-BOX.zNear)/(BOX.zFar+44-BOX.zNear),0.05,1);
+    const bright = zi%4===0;
+    ctx.strokeStyle=`hsla(${bright?mod(ghue+18,360):ghue},100%,${bright?70:55}%,${0.5*fade})`;
+    if (glowOn && bright){ ctx.shadowColor=`hsl(${ghue},100%,60%)`; ctx.shadowBlur=6; }
+    ctx.stroke(); ctx.shadowBlur=0;
+  }
+  // lines parallel to Z (vary x)
+  for (let xi=-BOX.x; xi<=BOX.x+0.1; xi+=4){
+    let started=false; ctx.beginPath();
+    for (let z=BOX.zNear; z<=BOX.zFar+44; z+=6){
+      const p=project([xi, FLOOR_Y, z]);
+      if (!p.vis){ started=false; continue; }
+      if (!started){ ctx.moveTo(p.x,p.y); started=true; } else ctx.lineTo(p.x,p.y);
+    }
+    ctx.strokeStyle=`hsla(${ghue},100%,55%,0.22)`;
+    ctx.stroke();
+  }
+}
+
+function drawLightShafts(){
+  // caustic god-rays from the surface (additive, swaying).
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  const horizon=cy_screen();
+  for (let i=0;i<6;i++){
+    const baseX = cx + (i-2.5)*W*0.13 + Math.sin(t*0.2+i)*30;
+    const w = 60 + Math.sin(t*0.5+i*1.3)*30;
+    const op = 0.05 + 0.04*(Math.sin(t*0.7+i)*0.5+0.5);
+    const g=ctx.createLinearGradient(baseX, horizon-40, baseX, H);
+    const hue=mod(pal.accents[1]+hueShift,360);
+    g.addColorStop(0, `hsla(${hue},100%,75%,${op})`);
+    g.addColorStop(1, `hsla(${hue},100%,60%,0)`);
+    ctx.fillStyle=g;
+    ctx.beginPath();
+    ctx.moveTo(baseX-w*0.3, horizon-40);
+    ctx.lineTo(baseX+w*0.3, horizon-40);
+    ctx.lineTo(baseX+w*1.6, H);
+    ctx.lineTo(baseX-w*1.6, H);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* ----------------------------------------- bubbles + plankton (3D points) */
+const bubbles=[], plankton=[];
+const VENTS=[ [-26,FLOOR_Y,30], [10,FLOOR_Y,42], [30,FLOOR_Y,22], [-6,FLOOR_Y,16] ];
+function initParticles(){
+  for (let i=0;i<70;i++) plankton.push({
+    p:[rnd(-BOX.x,BOX.x), rnd(BOX.yBot,BOX.yTop), rnd(BOX.zNear,BOX.zFar)],
+    seed:rnd(TAU), spd:rnd(0.3,0.9)
+  });
+}
+function emitBubbles(dt){
+  for (const v of VENTS){
+    if (Math.random()<dt*3){
+      bubbles.push({ p:[v[0]+rnd(-1,1), v[1], v[2]+rnd(-1,1)], r:rnd(0.08,0.22), seed:rnd(TAU), spd:rnd(2.5,4.5) });
+    }
+  }
+  for (let i=bubbles.length-1;i>=0;i--){
+    const b=bubbles[i];
+    b.p[1]+=b.spd*dt; b.p[0]+=Math.sin(t*1.5+b.seed)*0.6*dt; b.r+=dt*0.04;
+    if (b.p[1]>BOX.yTop-1) bubbles.splice(i,1);
+  }
+}
+function drawParticles(){
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  // plankton twinkle
+  for (const k of plankton){
+    k.p[1]+=k.spd*0.15*dt; k.p[0]+=Math.sin(t+k.seed)*0.15*dt;
+    if (k.p[1]>BOX.yTop) k.p[1]=BOX.yBot;
+    const pr=project(k.p); if(!pr.vis) continue;
+    const a=0.25+0.4*(Math.sin(t*3+k.seed)*0.5+0.5);
+    const hue=mod(pal.accents[1]+hueShift,360);
+    ctx.fillStyle=`hsla(${hue},100%,80%,${a*clamp(pr.inv*2,0.1,1)})`;
+    const s=clamp(pr.inv*1.6,0.6,2.4);
+    ctx.fillRect(pr.x,pr.y,s,s);
+  }
+  // bubbles
+  const bhue=mod(pal.accents[1]+hueShift,360);
+  for (const b of bubbles){
+    const pr=project(b.p); if(!pr.vis) continue;
+    const rr=Math.max(1,b.r*pr.inv);
+    ctx.strokeStyle=`hsla(${bhue},100%,82%,0.5)`; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.arc(pr.x,pr.y,rr,0,TAU); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* -------------------------------------------------- seaweed (low-poly 2D) */
+const weeds=[];
+function initWeeds(){
+  for (let i=0;i<14;i++){
+    weeds.push({ x:rnd(-BOX.x+4,BOX.x-4), z:rnd(BOX.zNear+6,BOX.zFar-6),
+      h:rnd(5,11), seed:rnd(TAU), hue: pal.accents[(Math.random()*pal.accents.length)|0] });
+  }
+}
+function drawWeeds(){
+  // sort far->near so they layer with depth
+  const list = weeds.map(w=>({w, pz:project([w.x,FLOOR_Y,w.z])})).filter(o=>o.pz.vis);
+  list.sort((a,b)=>b.pz.z-a.pz.z);
+  for (const {w,pz} of list){
+    const segs=5; let px=pz.x, py=pz.y;
+    const hue=mod(w.hue+hueShift,360);
+    ctx.lineWidth=Math.max(1, pz.inv*0.5);
+    for (let s=0;s<segs;s++){
+      const sway=Math.sin(t*1.2 + s*0.6 + w.seed)*(s+1)*0.5;
+      const top=project([w.x+sway, FLOOR_Y + (s+1)*(w.h/segs), w.z]);
+      if (!top.vis) break;
+      ctx.strokeStyle=`hsla(${hue},100%,${55+s*4}%,${0.5})`;
+      if (glowOn){ ctx.shadowColor=`hsl(${hue},100%,55%)`; ctx.shadowBlur=5; }
+      ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(top.x,top.y); ctx.stroke();
+      ctx.shadowBlur=0;
+      px=top.x; py=top.y;
+    }
+  }
+}
+
+/* =========================================================================
+   EVENTS — whale flyby, shooting comet, affirmations (rare rewards).
+   ========================================================================= */
+let whaleActive=false, nextWhaleAt=70;
+function maybeWhale(){
+  if (!whaleActive && t>nextWhaleAt){
+    const dir = Math.random()<0.5?1:-1;
+    const w=spawnCreature('whale', {
+      pos:[ -dir*(BOX.x+18), rnd(-4,6), BOX.zFar-4 ],
+      vel:[ dir*3.2, 0, 0 ], speed:3.2, scripted:true, life:Infinity,
+      hue: pal.accents[2], size:1
+    });
+    w.whaleDir=dir;
+    whaleActive=true;
+    nextWhaleAt = t + rnd(150,260);
+  }
+}
+
+const comets=[];
+let nextCometAt=40;
+function maybeComet(){
+  if (t>nextCometAt){
+    comets.push({ x:rnd(W*0.1,W*0.7), y:rnd(H*0.05,H*0.25), vx:rnd(180,300)*(Math.random()<0.5?1:-1), vy:rnd(60,120), life:1.4, t:0 });
+    nextCometAt = t + rnd(70,160);
+  }
+  for (let i=comets.length-1;i>=0;i--){
+    const c=comets[i]; c.t+=dt; c.x+=c.vx*dt; c.y+=c.vy*dt;
+    if (c.t>c.life) comets.splice(i,1);
+  }
+}
+function drawComets(){
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  for (const c of comets){
+    const a=clamp(1-c.t/c.life,0,1);
+    const tx=c.x-c.vx*0.12, ty=c.y-c.vy*0.12;
+    const g=ctx.createLinearGradient(tx,ty,c.x,c.y);
+    g.addColorStop(0,'#ffffff00'); g.addColorStop(1,`rgba(255,240,255,${a})`);
+    ctx.strokeStyle=g; ctx.lineWidth=2.2;
+    ctx.shadowColor='#fff'; ctx.shadowBlur=glowOn?10:0;
+    ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(c.x,c.y); ctx.stroke();
+    ctx.shadowBlur=0;
+  }
+  ctx.restore();
+}
+
+// gentle affirmations fade in occasionally
+const LINES=['just breathe','you are doing fine','let it drift','stay a while','the tide is patient','you belong here','soften','one slow breath','nothing to fix right now','watch the light move'];
+let aff={ text:'', a:0, phase:'wait', timer:14, i:0 };
+function updateAff(dt){
+  aff.timer-=dt;
+  if (aff.phase==='wait' && aff.timer<=0){ aff.phase='in'; aff.text=LINES[aff.i%LINES.length]; aff.i++; }
+  if (aff.phase==='in'){ aff.a=Math.min(1,aff.a+dt/2.5); if(aff.a>=1){aff.phase='hold'; aff.timer=6;} }
+  else if (aff.phase==='hold'){ if(aff.timer<=0) aff.phase='out'; }
+  else if (aff.phase==='out'){ aff.a=Math.max(0,aff.a-dt/2.5); if(aff.a<=0){aff.phase='wait'; aff.timer=rnd(55,95);} }
+}
+function drawAff(){
+  if (aff.a<=0) return;
+  ctx.save();
+  ctx.globalAlpha=aff.a*0.7;
+  ctx.font=`300 ${Math.round(clamp(W*0.03,16,34))}px 'Courier New', monospace`;
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  const hue=mod(pal.accents[0]+hueShift,360);
+  ctx.fillStyle=`hsl(${hue},90%,80%)`;
+  if (glowOn){ ctx.shadowColor=`hsl(${hue},100%,65%)`; ctx.shadowBlur=14; }
+  ctx.fillText(aff.text.toUpperCase(), cx, H*0.32);
+  ctx.restore();
+}
+
+/* ------------------------------------------------- vignette + CRT overlay */
+let scanPattern=null;
+function buildScan(){
+  const p=document.createElement('canvas'); p.width=1; p.height=3;
+  const pc=p.getContext('2d');
+  pc.fillStyle='rgba(0,0,0,0.16)'; pc.fillRect(0,2,1,1);
+  scanPattern=ctx.createPattern(p,'repeat');
+}
+function drawOverlay(){
+  // vignette
+  const g=ctx.createRadialGradient(cx,H*0.45,Math.min(W,H)*0.25, cx,H*0.5,Math.max(W,H)*0.75);
+  g.addColorStop(0,'#00000000'); g.addColorStop(1,'rgba(5,0,18,0.75)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // scanlines
+  ctx.fillStyle=scanPattern; ctx.fillRect(0,0,W,H);
+  // rolling bright band
+  const by=mod(t*60,H+80)-40;
+  const rg=ctx.createLinearGradient(0,by-20,0,by+20);
+  rg.addColorStop(0,'#ffffff00'); rg.addColorStop(0.5,'rgba(255,255,255,0.035)'); rg.addColorStop(1,'#ffffff00');
+  ctx.fillStyle=rg; ctx.fillRect(0,by-20,W,40);
+}
+
+/* =========================================================================
+   AMBIENT AUDIO (opt-in, muted by default) — detuned drone + soft bells.
+   ========================================================================= */
+let audio=null, audioOn=false;
+const sndBtn=document.getElementById('snd');
+function initAudio(){
+  const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return null;
+  const ac=new AC();
+  const master=ac.createGain(); master.gain.value=0.0; master.connect(ac.destination);
+  const lp=ac.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=600; lp.Q.value=4; lp.connect(master);
+  // drone: 3 detuned oscillators
+  const freqs=[55,55.4,82.5];
+  const oscs=freqs.map(f=>{ const o=ac.createOscillator(); o.type='sine'; o.frequency.value=f;
+    const g=ac.createGain(); g.gain.value=0.18; o.connect(g); g.connect(lp); o.start(); return o; });
+  // slow LFO sweeps filter cutoff
+  const lfo=ac.createOscillator(); lfo.frequency.value=0.05; const lg=ac.createGain(); lg.gain.value=350;
+  lfo.connect(lg); lg.connect(lp.frequency); lfo.start();
+  return { ac, master, lp, oscs, nextBell:2, scale:[0,3,5,7,10,12,15] };
+}
+function bell(a){
+  const ac=a.ac, root=220;
+  const semi=a.scale[(Math.random()*a.scale.length)|0]+(Math.random()<0.4?12:0);
+  const f=root*Math.pow(2,semi/12);
+  const o=ac.createOscillator(); o.type='triangle'; o.frequency.value=f;
+  const g=ac.createGain(); g.gain.value=0;
+  o.connect(g); g.connect(a.lp);
+  const now=ac.currentTime;
+  g.gain.setValueAtTime(0,now); g.gain.linearRampToValueAtTime(0.12,now+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001,now+3.5);
+  o.start(now); o.stop(now+3.6);
+}
+function updateAudio(dt){
+  if (!audio||!audioOn) return;
+  audio.nextBell-=dt;
+  if (audio.nextBell<=0){ bell(audio); audio.nextBell=rnd(4,9); }
+}
+sndBtn.addEventListener('click', ()=>{
+  if (!audio){ audio=initAudio(); }
+  if (!audio){ sndBtn.textContent='♪ sound: n/a'; return; }
+  audioOn=!audioOn;
+  if (audio.ac.state==='suspended') audio.ac.resume();
+  audio.master.gain.linearRampToValueAtTime(audioOn?0.5:0.0, audio.ac.currentTime+0.6);
+  sndBtn.textContent = audioOn ? '♪ sound: on' : '♪ sound: off';
+});
+
+/* ----------------------------------------------------- idle UI auto-hide */
+let idleTimer=null;
+function poke(){
+  document.body.classList.remove('idle');
+  document.body.style.cursor='default';
+  clearTimeout(idleTimer);
+  idleTimer=setTimeout(()=>{ document.body.classList.add('idle'); document.body.style.cursor='none'; }, 2600);
+}
+['mousemove','keydown','touchstart','click'].forEach(e=>window.addEventListener(e,poke));
+poke();
+
+/* =========================================================================
+   MAIN LOOP
+   ========================================================================= */
+let t=0, dt=0, last=performance.now();
+let frameAcc=0, frameN=0;       // adaptive quality monitor
+
+seedPopulation();
+initParticles();
+initWeeds();
+buildScan();
+
+function tick(now){
+  dt = Math.min(0.05, (now-last)/1000); last=now; t+=dt;
+
+  // --- adaptive quality: average frame ms, toggle glow if struggling ---
+  frameAcc+=dt; frameN++;
+  if (frameN>=45){
+    const avg=frameAcc/frameN*1000;
+    if (avg>26 && glowOn) glowOn=false;
+    else if (avg<17 && !glowOn) glowOn=true;
+    frameAcc=0; frameN=0;
+  }
+
+  // --- time-evolving mood ---
+  dayPhase = mod(dayPhase + dt/DAY_LEN, 1);
+  const sk = Math.sin(dayPhase*TAU);
+  ambient = 0.5 + 0.32*(sk*0.5+0.5);
+  hueShift = mod(hueShift + dt*1.6, 360);
+  // palette cross-fade
+  if (t>nextPalAt && palT>=1){
+    palIdx=(palIdx+1)%PALETTES.length; palTarget=PALETTES[palIdx]; palT=0;
+    nextPalAt = t + rnd(120,200);
+  }
+  if (palT<1){
+    palT=Math.min(1,palT+dt/palDur);
+    pal.grid=lerpHue(pal.grid,palTarget.grid,dt/palDur);
+    for (let i=0;i<pal.accents.length;i++) pal.accents[i]=lerpHue(pal.accents[i],palTarget.accents[i],dt/palDur);
+    pal.sun1=lerpColor(pal.sun1,palTarget.sun1,dt/palDur);
+    pal.sun2=lerpColor(pal.sun2,palTarget.sun2,dt/palDur);
+  }
+
+  // --- drifting camera (Lissajous + slow zoom via target) ---
+  cam.pos[0]=Math.sin(t*0.031)*7 + Math.sin(t*0.013)*3;
+  cam.pos[1]=1.5+Math.sin(t*0.022)*2.4;
+  cam.pos[2]=-30+Math.sin(t*0.017)*4;
+  cam.tgt[0]=Math.sin(t*0.02)*5;
+  cam.tgt[1]=Math.sin(t*0.015)*2;
+  cam.tgt[2]=26;
+  buildView();
+
+  // --- population breathing ---
+  if (creatures.length < SOFT_CAP && Math.random()<dt*0.25) spawnCreature('fish');
+  if (creatures.length > SOFT_CAP+3 && Math.random()<dt*0.15){
+    const idx=creatures.findIndex(c=>c.kind==='fish');
+    if (idx>=0) creatures[idx].fade=-1;
+  }
+
+  // --- events ---
+  maybeWhale(); maybeComet();
+  updateAff(dt); updateAudio(dt);
+  emitBubbles(dt);
+
+  // --- update creatures, cull faded/escaped scripted ones ---
+  for (let i=creatures.length-1;i>=0;i--){
+    const c=creatures[i];
+    updateCreature(c, dt);
+    if (c.fade<0){
+      c.size*=Math.max(0,1-dt*1.5);
+      if (c.size<0.05){ if(c.kind==='whale')whaleActive=false; creatures.splice(i,1); }
+    }
+    if (c.scripted && Math.abs(c.pos[0])>BOX.x+24){ if(c.kind==='whale')whaleActive=false; creatures.splice(i,1); }
+  }
+
+  /* ---------------- DRAW ---------------- */
+  drawSky();
+  drawSun();
+  drawLightShafts();
+  drawGrid();
+  drawWeeds();
+
+  faceBuf.length=0;
+  for (const c of creatures) gatherCreature(c, t);
+  drawFaces();
+
+  drawParticles();
+  drawComets();
+  drawAff();
+  drawOverlay();
+
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
