@@ -1253,7 +1253,7 @@
             f.fireCool = rand(0.7, 1.5);
             const Sxy = CONFIG.shipScale * f.scaleMul, from = { x: f.x, h: f.h, z: f.z };
             const aim = leadAim(from, tgt.x, tgt.h, tgt.z, tgt.ovx, tgt.ovy, tgt.ovz - gsB);
-            fireVolley(from, Sxy * 0.4, aim, tgt, 'enemy', CAPC, CONFIG.boltAccuracy);
+            fireVolley(from, Sxy * 0.4, aim, tgt, 'enemy', CAPC, CONFIG.boltAccuracy * 0.5);   // foes are half as deadly
         }
 
         // advance tracers; accuracy rolled AT IMPACT. ally bolts hurt transits/capital, enemy bolts kill fighters
@@ -1298,18 +1298,18 @@
                             tg.dead = true;
                             if (tg.slot) detonate(tg.wx, tg.wh, tg.wz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
                             else detonate(tg.x, tg.h, tg.z, tg.isCar ? CAR_MODEL : SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, tg.isCar ? CONFIG.col.orange : (tg.foe ? CAPC : CY));
-                        } else if (tg.isPoly){                      // tumbling polyhedron: big blast
+                        } else if (tg.isPoly){                      // tumbling polyhedron: big blast — grants a missile outright
                             tg.dead = true;
                             detonate(b.tx, b.ty, b.tz, OCTA_MODEL, tg.rx, tg.ry, 0, 1.6, 4, tg.col);
-                            if (b.shooter) b.shooter.hasMissile = true;   // a kill earns a missile
+                            if (b.shooter){ b.shooter.hasMissile = true; b.shooter.kills = 0; }
                         } else if (tg.isCar){                        // rare light-car
                             tg.dead = true;
                             detonate(tg.x, tg.h, tg.z, CAR_MODEL, tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CONFIG.col.orange);
-                            if (b.shooter) b.shooter.hasMissile = true;
+                            creditKill(b.shooter);
                         } else {                                    // transit (friendly or ominous foe)
                             tg.dead = true;
                             detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, tg.foe ? CAPC : CY);
-                            if (b.shooter) b.shooter.hasMissile = true;
+                            creditKill(b.shooter);
                         }
                     }
                 }
@@ -1474,6 +1474,13 @@
         FX.bolts.push({ x0: from.x, y0: from.h, z0: from.z, x: from.x, y: from.h, z: from.z,
             tx: aim.x, ty: aim.h, tz: aim.z, T, age: 0, delay: CONFIG.blastReact, target,
             decisive: true, kind: 'ally', col: CONFIG.col.orange, acc: 1, missile: true, shooter: shooter || null });
+    }
+
+    // a squad member earns a missile after TWO target kills while on stage (a polyhedron kill grants one outright)
+    function creditKill(sh){
+        if (!sh) return;
+        sh.kills = (sh.kills || 0) + 1;
+        if (sh.kills >= 2){ sh.hasMissile = true; sh.kills = 0; }
     }
 
     // project a world point (lateral xw, forward z, height above grid) to clip space,
