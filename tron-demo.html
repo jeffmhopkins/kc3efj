@@ -107,6 +107,7 @@
         capHP:         [5, 9],       // formation hits needed to destroy it
         capFireGap:    0.7,          // seconds between the capital's return-fire volleys
         capFireProb:   0.8,          // chance the capital actually fires on each beat
+        capSwitch:     2.5,          // seconds before the capital re-picks a tracked target
         capAccuracy:   0.065,        // chance a capital volley destroys the targeted fighter (normal target)
 
         // ── ground turret (rare; rides the grid, sprays everything except the capital) ──
@@ -162,6 +163,11 @@
     // (Honoring prefers-reduced-motion froze some browsers on the first frame until a resize.)
     const reduced = false;
     const isMobile = window.innerWidth <= 768 || 'ontouchstart' in window;
+
+    // single far-field cull distance for every deep cameo (transits, bolts, embers), plus a short
+    // fade band so things fade out over the last few units of depth instead of popping at the edge.
+    const FAR_Z = 130, FAR_FADE = 12;
+    const farFade = z => Math.max(0, Math.min(1, (FAR_Z - z) / FAR_FADE));
 
     // ──────────────────────────────────────────────────────────────
     //  Shader sources
@@ -813,19 +819,50 @@
     ];
 
     // huge capital ship (own renderer): long wedge hull + bridge tower + ventral fin + running lights
-    const CAPITAL_MODEL = {
-        V: [[0,0,2.4],[0.6,0.12,0.6],[-0.6,0.12,0.6],[0.6,-0.12,0.6],[-0.6,-0.12,0.6],
-            [0.75,0.14,-1.6],[-0.75,0.14,-1.6],[0.75,-0.14,-1.6],[-0.75,-0.14,-1.6],
-            [0,0.5,-0.8],[0.2,0.16,-0.4],[-0.2,0.16,-0.4],[0,-0.4,-0.9]],
-        E: [[0,1],[0,2],[0,3],[0,4],[1,2],[3,4],[1,3],[2,4],
-            [1,5],[2,6],[3,7],[4,8],[5,6],[7,8],[5,7],[6,8],
-            [10,9],[11,9],[10,11],[9,5],[9,6],[12,7],[12,8]],
-        F: [[1,5,6],[1,6,2],[3,4,8],[3,8,7],[1,3,7],[1,7,5],[2,6,8],[2,8,4],
-            [0,1,2],[0,3,4],[0,1,3],[0,2,4],[9,10,11]],
-        ENG: [[0.4,0,-1.6],[-0.4,0,-1.6],[0,0.05,-1.6]],
-        LIGHTS: [1,2,3,4,5,6,7,8,9] };
-    // two dual-barrel turret hardpoints on the dorsal flanks (model-local; fire from both at once)
-    const CAP_HARDPOINTS = [[0.52, 0.20, 0.15], [-0.52, 0.20, 0.15]];
+    // three capital-ship variants (same ominous red); each carries its own engines, running lights,
+    // and two stubby dual-barrel turret hardpoints (forward + aft on the dorsal spine) that track a target.
+    const CAPITAL_MODELS = [
+        { // 0 — Arrowhead dreadnought (the original)
+          V: [[0,0,2.4],[0.6,0.12,0.6],[-0.6,0.12,0.6],[0.6,-0.12,0.6],[-0.6,-0.12,0.6],
+              [0.75,0.14,-1.6],[-0.75,0.14,-1.6],[0.75,-0.14,-1.6],[-0.75,-0.14,-1.6],
+              [0,0.5,-0.8],[0.2,0.16,-0.4],[-0.2,0.16,-0.4],[0,-0.4,-0.9]],
+          E: [[0,1],[0,2],[0,3],[0,4],[1,2],[3,4],[1,3],[2,4],
+              [1,5],[2,6],[3,7],[4,8],[5,6],[7,8],[5,7],[6,8],
+              [10,9],[11,9],[10,11],[9,5],[9,6],[12,7],[12,8]],
+          F: [[1,5,6],[1,6,2],[3,4,8],[3,8,7],[1,3,7],[1,7,5],[2,6,8],[2,8,4],
+              [0,1,2],[0,3,4],[0,1,3],[0,2,4],[9,10,11]],
+          ENG: [[0.4,0,-1.6],[-0.4,0,-1.6],[0,0.05,-1.6]],
+          LIGHTS: [1,2,3,4,5,6,7,8,9],
+          HARDPOINTS: [[0,0.30,1.05],[0,0.34,-0.95]] },
+        { // 1 — Spinal battlecruiser: long slim prow, lateral sponsons, twin tail fins
+          V: [[0,0.0,2.6],[0,0.18,1.4],[0.30,0.0,1.2],[-0.30,0.0,1.2],
+              [0.32,0.14,0.2],[-0.32,0.14,0.2],[0.32,-0.14,0.2],[-0.32,-0.14,0.2],
+              [0.85,0.0,-0.3],[-0.85,0.0,-0.3],
+              [0.34,0.16,-1.7],[-0.34,0.16,-1.7],[0.34,-0.16,-1.7],[-0.34,-0.16,-1.7],
+              [0.22,0.55,-1.3],[-0.22,0.55,-1.3]],
+          E: [[0,1],[0,2],[0,3],[1,2],[1,3],[2,3],[2,4],[3,5],[2,6],[3,7],[1,4],[1,5],
+              [4,5],[6,7],[4,6],[5,7],[4,8],[6,8],[5,9],[7,9],
+              [4,10],[5,11],[6,12],[7,13],[10,11],[12,13],[10,12],[11,13],
+              [10,14],[4,14],[11,15],[5,15],[14,15],[8,10],[8,12],[9,11],[9,13]],
+          F: [[0,1,2],[0,3,1],[1,4,5],[2,4,6],[3,5,7],[4,10,5],[5,10,11],[6,12,7],
+              [7,12,13],[10,11,12],[11,13,12],[4,8,6],[5,9,7]],
+          ENG: [[0.34,0,-1.7],[-0.34,0,-1.7],[0,0,-1.7]],
+          LIGHTS: [1,2,3,8,9,10,11,14,15],
+          HARDPOINTS: [[0,0.34,0.85],[0,0.42,-1.05]] },
+        { // 2 — Hammerhead carrier: wide flat bow bar, conning tower, broad stern
+          V: [[0.9,0.0,1.6],[-0.9,0.0,1.6],[0.5,0.10,1.7],[-0.5,0.10,1.7],[0,0.0,1.2],
+              [0.6,0.12,0.2],[-0.6,0.12,0.2],[0.6,-0.10,0.2],[-0.6,-0.10,0.2],
+              [0,0.45,-0.2],
+              [0.55,0.12,-1.7],[-0.55,0.12,-1.7],[0.55,-0.10,-1.7],[-0.55,-0.10,-1.7]],
+          E: [[0,2],[2,4],[4,3],[3,1],[0,4],[1,4],[0,1],[2,5],[3,6],[0,5],[1,6],[4,5],[4,6],
+              [5,6],[7,8],[5,7],[6,8],[5,9],[6,9],[10,9],[11,9],
+              [5,10],[6,11],[7,12],[8,13],[10,11],[12,13],[10,12],[11,13]],
+          F: [[0,2,4],[1,4,3],[0,4,1],[2,5,4],[3,4,6],[5,6,9],[5,9,10],[6,11,9],
+              [5,10,11],[5,11,6],[7,12,8],[8,12,13]],
+          ENG: [[0.5,0,-1.7],[-0.5,0,-1.7],[0,0,-1.7]],
+          LIGHTS: [0,1,2,3,9,10,11],
+          HARDPOINTS: [[0,0.26,0.75],[0,0.34,-1.0]] }
+    ];
 
     // low-poly light-car: sleek wedge, nose +z (travel), canopy ridge, wide low body
     const CAR_MODEL = {
@@ -851,7 +888,7 @@
                  squad: null, transits: [], bolts: [], blasts: [], embers: [], groundSparks: [],
                  nebula: [], nearStars: [], lightning: null, capital: null, turret: null, car: null,
                  ridgeAmt: 0, ridgeTarget: 0,
-                 nextStar: 0, nextComet: 0, nextPoly: 0, nextCycle: 0, nextGlyph: 0, nextShip: 0, nextTransit: 0,
+                 nextStar: 0, nextComet: 0, nextPoly: 0, nextCycle: 0, nextGlyph: 0, nextShip: 0, nextTransit: 0, nextFoe: 0,
                  nextRidge: 0, nextLightning: 0, nextCapital: 0, nextTurret: 0, nextCar: 0 };
 
     function buildRidge(){
@@ -877,7 +914,7 @@
         FX.nextGlyph = rand(CONFIG.glyphGap[0], CONFIG.glyphGap[1]);
         FX.squad = null;
         FX.nextShip = 4;                                  // first pass arrives soon; later gaps use shipGap
-        FX.transits = []; FX.nextTransit = rand(3, 8);
+        FX.transits = []; FX.nextTransit = rand(3, 8); FX.nextFoe = rand(8, 16);
         FX.bolts = []; FX.blasts = []; FX.embers = []; FX.groundSparks = [];
         FX.ridgeAmt = 0; FX.ridgeTarget = Math.random() < CONFIG.ridgePresent ? 1 : 0;
         FX.nextRidge = rand(25, 60);
@@ -911,6 +948,26 @@
 
         // rare light-car streaking past toward the sun
         FX.car = null; FX.nextCar = rand(CONFIG.carGap[0], CONFIG.carGap[1]);
+    }
+
+    // a side-to-side transit ship; foe=true makes it an ominous hostile that hunts the friendly transits
+    function spawnTransit(foe){
+        const dir = Math.random() < 0.5 ? 1 : -1, z = rand(12, 88);   // deeper range — some pass far out
+        const span = z * 0.6 * (sw / sh) * 0.85;
+        const sp = rand(0.6, 2.6), dev = rand(-0.9, 0.9);             // varied speed + heading
+        const ang = (dir > 0 ? Math.PI / 2 : -Math.PI / 2) - dir * dev;
+        const ovx = Math.sin(ang) * sp, ovz = Math.cos(ang) * sp;
+        const theta = rand(0, 20) * Math.PI / 180;                   // climb randomized 0-20deg
+        const ovy = (Math.abs(ovx) / (sw / sh)) * Math.tan(theta);
+        const vmag = Math.hypot(ovx, ovy, ovz);
+        const roll = -dir * rand(0.55, 1.0);                         // bank so the wing planform faces us
+        FX.transits.push({ x: dir > 0 ? -span : span, z, h: rand(0.10, 0.45),
+            ovx, ovz, ovy, roll,
+            yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
+            pitch: -Math.asin(ovy / vmag),                           // nose + jet aligned to true heading
+            plume: rand(0.5, 1.7),
+            model: Math.random() * SHIP_MODELS.length | 0, scaleMul: rand(1.3, 2.1),
+            foe: !!foe, fireCool: rand(0.4, 1.4) });
     }
 
     function makeCar(){
@@ -1003,28 +1060,18 @@
         // sporadic distant ships transiting side-to-side (ambient; runs independently).
         // while a capital ship is visible the sky gets busier: twice the spawn rate, more on-screen at once.
         const capVis = !!(FX.capital && FX.capital.onScreen);
+        let foeCount = 0; for (const t of FX.transits) if (t.foe) foeCount++;
+        const friendCount = FX.transits.length - foeCount;
         FX.nextTransit -= dt;
-        if (FX.nextTransit <= 0 && FX.transits.length < (capVis ? 4 : 2)){
-            const dir = Math.random() < 0.5 ? 1 : -1, z = rand(12, 88);   // deeper range — some pass far out
-            const span = z * 0.6 * (sw / sh) * 0.85;
-            // own heading varies off pure tangent: angle from +z (forward), ~90deg +/- up to ~50deg
-            const sp = rand(0.6, 2.6), dev = rand(-0.9, 0.9);   // varied speed + heading
-            const ang = (dir > 0 ? Math.PI / 2 : -Math.PI / 2) - dir * dev;
-            const ovx = Math.sin(ang) * sp, ovz = Math.cos(ang) * sp;
-            const theta = rand(0, 20) * Math.PI / 180;          // climb randomized 0-20deg (as drawn on screen)
-            const ovy = (Math.abs(ovx) / (sw / sh)) * Math.tan(theta);   // matches on-screen rise to theta
-            const vmag = Math.hypot(ovx, ovy, ovz);
-            // bank into the crossing so the wing planform faces us — a near-tangent heading
-            // viewed edge-on (roll 0) collapses the flat hull to a thin line. Tilt the dorsal
-            // side toward the camera (sign = -dir), magnitude enough to show the wings.
-            const roll = -dir * rand(0.55, 1.0);
-            FX.transits.push({ x: dir > 0 ? -span : span, z, h: rand(0.10, 0.45),
-                ovx, ovz, ovy, roll,
-                yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
-                pitch: -Math.asin(ovy / vmag),                  // nose + jet aligned to true heading
-                plume: rand(0.5, 1.7),                          // varied jet plume strength
-                model: Math.random() * SHIP_MODELS.length | 0, scaleMul: rand(1.3, 2.1) });
+        if (FX.nextTransit <= 0 && friendCount < (capVis ? 4 : 2)){
+            spawnTransit(false);
             FX.nextTransit = rand(CONFIG.transitGap[0], CONFIG.transitGap[1]) * (capVis ? 0.5 : 1);
+        }
+        // ominous foe ships — about 1/3 as many as the friendlies (spawn at ~1/3 the rate); they hunt the others
+        FX.nextFoe -= dt;
+        if (FX.nextFoe <= 0 && foeCount < (capVis ? 2 : 1)){
+            spawnTransit(true);
+            FX.nextFoe = rand(CONFIG.transitGap[0], CONFIG.transitGap[1]) * 3 * (capVis ? 0.5 : 1);
         }
         const aspT = sw / sh;
         for (let i = FX.transits.length - 1; i >= 0; i--){
@@ -1033,7 +1080,7 @@
             const zc = Math.max(0.5, tr.z), inv = 1 / (zc * 0.6);
             const uvx = 0.5 + cam.headSend + tr.x * inv / aspT;
             const uvy = (CONFIG.horizon + cam.pitchSend) - 0.20 / zc + tr.h * inv;   // y-up
-            if (tr.dead || tr.z < 1.0 || tr.z > 120 || uvx < -0.4 || uvx > 1.4 || uvy > 1.35) FX.transits.splice(i, 1);
+            if (tr.dead || tr.z < 1.0 || tr.z > FAR_Z || uvx < -0.4 || uvx > 1.4 || uvy > 1.35) FX.transits.splice(i, 1);
         }
 
         // ── space battle: formation snipes crossing craft; the capital ship fires back ──
@@ -1115,37 +1162,47 @@
             const uvy = (CONFIG.horizon + cam.pitchSend) - 0.20 / zc + h * inv;
             return z > 1.0 && uvx > 0.02 && uvx < 0.98 && uvy > 0.02 && uvy < 0.98;
         };
-        if (cap && !cap.dead && cap.onScreen && cap.backCool <= 0){
+        if (cap && !cap.dead && cap.onScreen){
             const pool = [];
             if (FX.squad){ const sq = FX.squad, t = sq.t;       // any squad member on stage, slotted or maneuvering
                 for (const sh of sq.ships) if (!sh.dead && sh.wx !== undefined && t >= sh.arriveAt && t < sh.departAt + sh.depDur && visOnScreen(sh.wx, sh.wz, sh.wh)) pool.push(sh); }
-            for (const tr of FX.transits) if (!tr.dead && tr.z > 4 && visOnScreen(tr.x, tr.z, tr.h)) pool.push(tr);
+            for (const tr of FX.transits) if (!tr.dead && !tr.foe && tr.z > 4 && visOnScreen(tr.x, tr.z, tr.h)) pool.push(tr);   // never the ominous red foes (same side)
             if (FX.car && !FX.car.dead && FX.car.z > 4 && visOnScreen(FX.car.x, FX.car.z, FX.car.h)) pool.push(FX.car);
-            if (pool.length){
-                cap.backCool = CONFIG.capFireGap;
-                if (Math.random() < CONFIG.capFireProb){
-                    const tgt = pool[Math.random() * pool.length | 0];
-                    const capSxy = CONFIG.shipScale * cap.scaleMul, capSz = capSxy * 0.6;
-                    const from = { x: cap.x, h: cap.h, z: cap.z - capSxy * 0.5 };
-                    let aim;
-                    if (tgt.slot) aim = { x: tgt.wx, h: tgt.wh, z: tgt.wz };   // live position (in slot or in transit)
-                    else aim = leadAim(from, tgt.x, tgt.h, tgt.z, tgt.ovx, tgt.ovy, tgt.ovz - gsB);
-                    // transform a model-local hardpoint to world (same roll(z)->pitch(x)->yaw(y) as the hull render)
-                    const cr = Math.cos(cap.roll), sr = Math.sin(cap.roll);
-                    const cp = Math.cos(cap.pitch || 0), sp = Math.sin(cap.pitch || 0);
-                    const cyw = Math.cos(cap.yaw), syw = Math.sin(cap.yaw);
-                    const hpWorld = v => {
-                        let x = v[0]*cr - v[1]*sr, y = v[0]*sr + v[1]*cr, z = v[2];
-                        const y2 = y*cp - z*sp; z = y*sp + z*cp; y = y2;
-                        const x2 = x*cyw + z*syw; z = -x*syw + z*cyw; x = x2;
-                        return { x: cap.x + x*capSxy, h: cap.h + y*capSxy, z: cap.z + z*capSz };
-                    };
-                    // both hardpoints fire at once → 4 bolts, each hardpoint a dual barrel ("pow-pow"); only one bolt stays decisive
-                    fireVolley(hpWorld(CAP_HARDPOINTS[0]), capSxy * 0.12, aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy, null, true,  0.05);
-                    fireVolley(hpWorld(CAP_HARDPOINTS[1]), capSxy * 0.12, aim, tgt, 'enemy', CAPC, CONFIG.capAccuracy, null, false, 0.05);
-                }
+            // lock and TRACK a single target like the ground turret (re-pick every capSwitch, or when lost)
+            if (cap.switchCool > 0) cap.switchCool -= dt;
+            if (cap.switchCool <= 0 || !cap.target || cap.target.dead || pool.indexOf(cap.target) === -1){
+                cap.target = pool.length ? pool[Math.random() * pool.length | 0] : null;
+                cap.switchCool = CONFIG.capSwitch;
             }
-        }
+            const tgt = cap.target;
+            if (tgt){
+                const capSxy = CONFIG.shipScale * cap.scaleMul, capSz = capSxy * 0.6;
+                const from = { x: cap.x, h: cap.h, z: cap.z - capSxy * 0.5 };
+                const gx = tgt.slot ? tgt.wx : tgt.x, gh = tgt.slot ? tgt.wh : tgt.h, gz = tgt.slot ? tgt.wz : tgt.z;
+                const vx = tgt.slot ? 0 : tgt.ovx, vy = tgt.slot ? 0 : tgt.ovy, vz = tgt.slot ? 0 : tgt.ovz - gsB;
+                cap.aim = leadAim(from, gx, gh, gz, vx, vy, vz);   // both turrets track this lead point every frame
+                if (cap.backCool <= 0){                            // fire on cadence
+                    cap.backCool = CONFIG.capFireGap;
+                    if (Math.random() < CONFIG.capFireProb){
+                        // transform a model-local hardpoint to world (same roll(z)->pitch(x)->yaw(y) as the hull render)
+                        const cr = Math.cos(cap.roll), sr = Math.sin(cap.roll);
+                        const cp = Math.cos(cap.pitch || 0), sp = Math.sin(cap.pitch || 0);
+                        const cyw = Math.cos(cap.yaw), syw = Math.sin(cap.yaw);
+                        const hpWorld = v => {
+                            let x = v[0]*cr - v[1]*sr, y = v[0]*sr + v[1]*cr, z = v[2];
+                            const y2 = y*cp - z*sp; z = y*sp + z*cp; y = y2;
+                            const x2 = x*cyw + z*syw; z = -x*syw + z*cyw; x = x2;
+                            return { x: cap.x + x*capSxy, h: cap.h + y*capSxy, z: cap.z + z*capSz };
+                        };
+                        // both hardpoints fire at once → 4 bolts, each a dual barrel ("pow-pow"); only one bolt stays decisive
+                        const HP = CAPITAL_MODELS[cap.cm].HARDPOINTS;
+                        const capAcc = tgt.slot ? CONFIG.capAccuracy * 1.3 : CONFIG.capAccuracy;   // 30% deadlier vs squad fighters
+                        fireVolley(hpWorld(HP[0]), capSxy * 0.10, cap.aim, tgt, 'enemy', CAPC, capAcc, null, true,  0.05);
+                        fireVolley(hpWorld(HP[1]), capSxy * 0.10, cap.aim, tgt, 'enemy', CAPC, capAcc, null, false, 0.05);
+                    }
+                }
+            } else cap.aim = null;
+        } else if (cap) cap.aim = null;   // off-screen / gone: barrels rest forward
 
         // ground turret: locks one target at a time (re-picks every 2s), tracks it, sprays fast + inaccurately
         if (FX.turret){
@@ -1153,7 +1210,7 @@
             const pool = [];                                       // everything EXCEPT the capital ship
             if (FX.squad){ const sq = FX.squad, t = sq.t;          // any squad member on stage, slotted or maneuvering
                 for (const sh of sq.ships) if (!sh.dead && sh.wx !== undefined && t >= sh.arriveAt && t < sh.departAt + sh.depDur) pool.push(sh); }
-            for (const tr of FX.transits) if (!tr.dead && tr.z > 2) pool.push(tr);
+            for (const tr of FX.transits) if (!tr.dead && !tr.foe && tr.z > 2) pool.push(tr);   // never the ominous red foes (same side)
             if (FX.car && !FX.car.dead && FX.car.z > 2) pool.push(FX.car);   // turret may lock the car, but every shot misses
             if (tu.switchCool <= 0 || !tu.target || tu.target.dead){
                 tu.target = pool.length ? pool[Math.random() * pool.length | 0] : null;
@@ -1182,6 +1239,24 @@
                 }
             }
         }
+
+        // ominous foe transits open fire on the friendly transits crossing the sky with them
+        for (const f of FX.transits){
+            if (!f.foe || f.dead || f.z < 3){ continue; }
+            if (f.fireCool > 0){ f.fireCool -= dt; continue; }
+            if (!visOnScreen(f.x, f.z, f.h)){ f.fireCool = 0.4; continue; }
+            let tgt = null, n = 0;                                    // reservoir-pick a visible friendly transit
+            for (const t of FX.transits){
+                if (t.foe || t.dead || t.z < 3 || !visOnScreen(t.x, t.z, t.h)) continue;
+                if (Math.random() < 1 / ++n) tgt = t;
+            }
+            if (!tgt){ f.fireCool = 0.5; continue; }
+            f.fireCool = rand(0.7, 1.5);
+            const Sxy = CONFIG.shipScale * f.scaleMul, from = { x: f.x, h: f.h, z: f.z };
+            const aim = leadAim(from, tgt.x, tgt.h, tgt.z, tgt.ovx, tgt.ovy, tgt.ovz - gsB);
+            fireVolley(from, Sxy * 0.4, aim, tgt, 'enemy', CAPC, CONFIG.boltAccuracy * 0.5);   // foes are half as deadly
+        }
+
         // advance tracers; accuracy rolled AT IMPACT. ally bolts hurt transits/capital, enemy bolts kill fighters
         for (let i = FX.bolts.length - 1; i >= 0; i--){
             const b = FX.bolts[i];
@@ -1198,7 +1273,7 @@
                         hit = true;
                         if (tg.cap){
                             tg.dead = true;
-                            detonate(tg.x, tg.h, tg.z, CAPITAL_MODEL, tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 5, CAPC);
+                            detonate(tg.x, tg.h, tg.z, CAPITAL_MODELS[tg.cm], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 5, CAPC);
                             FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]);
                         } else if (tg.isTurret){
                             const gg = Math.min(12, tg.z);
@@ -1212,7 +1287,7 @@
                         hit = true;                                 // never glances off / flies past the capital
                         if (Math.random() < b.acc && --tg.hp <= 0){ // accuracy only decides whether it chips HP
                             tg.dead = true;
-                            detonate(tg.x, tg.h, tg.z, CAPITAL_MODEL, tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 4, CAPC);
+                            detonate(tg.x, tg.h, tg.z, CAPITAL_MODELS[tg.cm], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 4, CAPC);
                             FX.capital = null; FX.nextCapital = rand(CONFIG.capitalGap[0], CONFIG.capitalGap[1]);
                         }
                     } else if (tg.isTurret){                        // indestructible: EVERY shot lands an ineffective hit (sparks, never passes through)
@@ -1223,19 +1298,19 @@
                         if (b.kind === 'enemy'){                     // capital/turret -> fighter or transit
                             tg.dead = true;
                             if (tg.slot) detonate(tg.wx, tg.wh, tg.wz, SHIP_MODELS[tg.model], 0, 0, 0, tg.scaleMul, 1, CY);
-                            else detonate(tg.x, tg.h, tg.z, tg.isCar ? CAR_MODEL : SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, tg.isCar ? CONFIG.col.orange : CY);
-                        } else if (tg.isPoly){                      // tumbling polyhedron: big blast
+                            else detonate(tg.x, tg.h, tg.z, tg.isCar ? CAR_MODEL : SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, tg.isCar ? CONFIG.col.orange : (tg.foe ? CAPC : CY));
+                        } else if (tg.isPoly){                      // tumbling polyhedron: big blast — grants a missile outright
                             tg.dead = true;
                             detonate(b.tx, b.ty, b.tz, OCTA_MODEL, tg.rx, tg.ry, 0, 1.6, 4, tg.col);
-                            if (b.shooter) b.shooter.hasMissile = true;   // a kill earns a missile
+                            if (b.shooter){ b.shooter.hasMissile = true; b.shooter.kills = 0; }
                         } else if (tg.isCar){                        // rare light-car
                             tg.dead = true;
                             detonate(tg.x, tg.h, tg.z, CAR_MODEL, tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CONFIG.col.orange);
-                            if (b.shooter) b.shooter.hasMissile = true;
-                        } else {                                    // transit
+                            creditKill(b.shooter);
+                        } else {                                    // transit (friendly or ominous foe)
                             tg.dead = true;
-                            detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, CY);
-                            if (b.shooter) b.shooter.hasMissile = true;
+                            detonate(tg.x, tg.h, tg.z, SHIP_MODELS[tg.model], tg.yaw, tg.pitch, tg.roll, tg.scaleMul, 1, tg.foe ? CAPC : CY);
+                            creditKill(b.shooter);
                         }
                     }
                 }
@@ -1244,7 +1319,7 @@
                 if (Math.random() < 0.3333){ sparkBurst(b.x, b.y, b.z, 5); FX.bolts.splice(i, 1); continue; }
                 // else keep flying (resolved prevents another roll); culled below when it leaves the field
             }
-            if (b.z < 0.4 || b.z > 125) FX.bolts.splice(i, 1);   // reach the far (deep) transits before culling
+            if (b.z < 0.4 || b.z > FAR_Z) FX.bolts.splice(i, 1);   // shared far-field cull (reaches the deep transits)
         }
         for (let i = FX.blasts.length - 1; i >= 0; i--){ const bl = FX.blasts[i];
             bl.age += dt; if (bl.age >= bl.dur) FX.blasts.splice(i, 1); }
@@ -1300,7 +1375,7 @@
             if (tu.switchCool > 0) tu.switchCool -= dt;
             if (tu.fireCool > 0) tu.fireCool -= dt;
             if (tu.shotCool > 0) tu.shotCool -= dt;             // formation's re-fire timer against it
-            if (tu.z < 0.55){ FX.turret = null; FX.nextTurret = rand(CONFIG.turretGap[0], CONFIG.turretGap[1]); }
+            if (tu.z < 0.2){ FX.turret = null; FX.nextTurret = rand(CONFIG.turretGap[0], CONFIG.turretGap[1]); }
         }
 
         // rare light-car: streaks forward past the camera toward the sun on the grid
@@ -1308,7 +1383,7 @@
         else {
             const cr = FX.car;
             cr.x += cr.ovx * dt; cr.z += (cr.ovz - (reduced ? 0 : CONFIG.gridScroll)) * dt; cr.h += cr.ovy * dt;
-            if (cr.dead || cr.z > 44){ FX.car = null; FX.nextCar = rand(CONFIG.carGap[0], CONFIG.carGap[1]); }
+            if (cr.dead || cr.z > FAR_Z){ FX.car = null; FX.nextCar = rand(CONFIG.carGap[0], CONFIG.carGap[1]); }   // shared far cull like the transits
         }
 
         // falling embers from detonations — arc out, fall under gravity, spark on the grid floor
@@ -1317,7 +1392,7 @@
             e.vy -= GRAV * dt;
             e.x += e.vx * dt; e.z += (e.vz - gs2) * dt; e.y += e.vy * dt; e.life -= dt;
             if (e.y <= 0){ FX.groundSparks.push({ x: e.x, z: e.z, age: 0, dur: rand(0.35, 0.6) }); FX.embers.splice(i, 1); }
-            else if (e.life <= 0 || e.z < 0.3 || e.z > 130) FX.embers.splice(i, 1);   // low near-cull (squad deaths spark floor); far enough for deep kills
+            else if (e.life <= 0 || e.z < 0.3 || e.z > FAR_Z) FX.embers.splice(i, 1);   // low near-cull (squad deaths spark floor); shared far cull
         }
         if (FX.embers.length > 150) FX.embers.splice(0, FX.embers.length - 150);
         for (let i = FX.groundSparks.length - 1; i >= 0; i--){ const g = FX.groundSparks[i];
@@ -1338,10 +1413,12 @@
         const Sxy = CONFIG.shipScale * scaleMul;
         const h = 0.4 * Sxy + rand(0.2, 0.7);                         // lift it so the whole hull is above the horizon
         return { x: dir > 0 ? -span : span, z, h, dir, ovx, ovz, ovy, cap: true,
+            cm: Math.random() * CAPITAL_MODELS.length | 0,           // which hull variant
             yaw: Math.atan2(ovx, Math.abs(ovz) < 1e-3 ? 1e-3 : ovz),
             pitch: -Math.asin(ovy / vmag), roll: -dir * rand(0.05, 0.16),
             scaleMul, lights: 0,
-            hp: Math.round(rand(CONFIG.capHP[0], CONFIG.capHP[1])), dead: false, fireCool: 0, backCool: 1.0, onScreen: false };
+            hp: Math.round(rand(CONFIG.capHP[0], CONFIG.capHP[1])), dead: false, fireCool: 0, backCool: 1.0, onScreen: false,
+            target: null, switchCool: 0, aim: null };
     }
 
     // spawn a detonation: hull shards + shrapnel + falling embers, scaled by `mag` (1 = fighter, big = capital)
@@ -1398,6 +1475,13 @@
         FX.bolts.push({ x0: from.x, y0: from.h, z0: from.z, x: from.x, y: from.h, z: from.z,
             tx: aim.x, ty: aim.h, tz: aim.z, T, age: 0, delay: CONFIG.blastReact, target,
             decisive: true, kind: 'ally', col: CONFIG.col.orange, acc: 1, missile: true, shooter: shooter || null });
+    }
+
+    // a squad member earns a missile after THREE target kills while on stage (a polyhedron kill grants one outright)
+    function creditKill(sh){
+        if (!sh) return;
+        sh.kills = (sh.kills || 0) + 1;
+        if (sh.kills >= 3){ sh.hasMissile = true; sh.kills = 0; }
     }
 
     // project a world point (lateral xw, forward z, height above grid) to clip space,
@@ -1759,13 +1843,13 @@
         // distant transit ships (nose along their own heading; fade out as they pass near)
         for (const tr of FX.transits){
             if (tr.dead) continue;                              // destroyed this frame — the blast stands in for it
-            const fade = 0.95 * Math.min(1, (tr.z - 1.0) / 1.5);   // fade only when very close, so they can pass nearer
+            const fade = 0.95 * Math.min(1, (tr.z - 1.0) / 1.5) * farFade(tr.z);   // near fade-in + a quick fade-out before the far cull
             if (fade <= 0.01) continue;
-            drawShip(tr.x, tr.z, tr.h, tr.roll, tr.yaw, tr.pitch, tr.scaleMul, CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model], tr.plume);
+            drawShip(tr.x, tr.z, tr.h, tr.roll, tr.yaw, tr.pitch, tr.scaleMul, tr.foe ? CONFIG.col.cap : CONFIG.col.cyan, fade, false, SHIP_MODELS[tr.model], tr.plume);
         }
         // rare light-car streaking toward the sun (bright orange; fades in just past the camera)
         if (FX.car && !FX.car.dead){
-            const ca = FX.car, fade = 0.95 * Math.min(1, (ca.z - 0.6) / 0.8);
+            const ca = FX.car, fade = 0.95 * Math.min(1, (ca.z - 0.6) / 0.8) * farFade(ca.z);
             if (fade > 0.01)
                 drawShip(ca.x, ca.z, ca.h, ca.roll, ca.yaw, ca.pitch, ca.scaleMul, CONFIG.col.orange, fade, true, CAR_MODEL, 1.3);
         }
@@ -1775,6 +1859,7 @@
             if (b.delay > 0) continue;                          // still in the lock-on beat
             if (b.z < 0.35) continue;
             const bc = b.col || HOT;
+            const ff = farFade(b.z);                            // quick fade-out before the far cull
             const C = projectWorld(b.x, b.z, b.y, aspect);
             const dx = b.tx - b.x0, dy = b.ty - b.y0, dz = b.tz - b.z0, dl = Math.hypot(dx, dy, dz) || 1;
             const ux = dx / dl, uy = dy / dl, uz = dz / dl;
@@ -1785,10 +1870,10 @@
             if (uz > 0) tl = Math.min(tl, Math.max(0, (b.z - 0.6) / uz));
             if (tl > 0.01){
                 const Tt = projectWorld(b.x - ux * tl, b.z - uz * tl, b.y - uy * tl, aspect);
-                pushLineClip(Tt.x, Tt.y, C.x, C.y, 1.1, bc);
+                pushLineClip(Tt.x, Tt.y, C.x, C.y, 1.1 * ff, bc);
             }
             pushPt((C.x + 1) * 0.5, (1 - C.y) * 0.5, Math.min(15, C.inv * 34) * dprNow,
-                   bc[0] * 1.5, bc[1] * 1.5, bc[2] * 1.5);
+                   bc[0] * 1.5 * ff, bc[1] * 1.5 * ff, bc[2] * 1.5 * ff);
             if (b.missile){                                     // unmistakable special attack: throbbing warhead + halo + long contrail
                 const cnx = (C.x + 1) * 0.5, cny = (1 - C.y) * 0.5;
                 const pulse = 0.7 + 0.3 * Math.sin(b.age * 26);
@@ -1874,7 +1959,7 @@
 
         // --- capital-ship flyby (huge translucent ominous dreadnought near the horizon) ---
         if (FX.capital && !FX.capital.dead){
-            const c = FX.capital, M = CAPITAL_MODEL, OM = CONFIG.col.cap;
+            const c = FX.capital, M = CAPITAL_MODELS[c.cm], OM = CONFIG.col.cap;
             const Sxy = CONFIG.shipScale * c.scaleMul, Sz = Sxy * 0.6;
             const cr = Math.cos(c.roll), sr = Math.sin(c.roll);
             const cp = Math.cos(c.pitch || 0), spp = Math.sin(c.pitch || 0);
@@ -1900,15 +1985,26 @@
                     const pp = P[M.LIGHTS[k]], bl = 0.5 + 0.5 * Math.sin(c.lights * 3 + k * 1.7), col = (k % 2) ? OM : CONFIG.col.orange;
                     pushPt((pp.x + 1) * 0.5, (1 - pp.y) * 0.5, (3 + 3 * bl) * dprNow, col[0]*bl*fade, col[1]*bl*fade, col[2]*bl*fade);
                 }
-                // two dual-barrel turret hardpoints on the dorsal flanks (the four bolts originate here)
-                const hpSep = 0.11, hpLen = 0.55;
-                for (const hp of CAP_HARDPOINTS){
-                    const mount = proj(hp);
-                    pushPt((mount.x + 1) * 0.5, (1 - mount.y) * 0.5, Math.min(11, mount.inv * Sxy * 80) * dprNow, OM[0]*1.1*fade, OM[1]*0.4*fade, OM[2]*0.4*fade);
+                // two stubby dual-barrel turrets (fore + aft) that TRACK the capital's target like the ground turret
+                const hpSepW = Sxy * 0.12, stub = Sxy * 0.30;   // short, fat barrels
+                const fwdW = rot([0, 0, 1]);                    // ship-forward (rest pose when no target)
+                for (const hp of M.HARDPOINTS){
+                    const r = rot(hp);
+                    const mx = c.x + r[0]*Sxy, mz = c.z + r[2]*Sz, mh = c.h + r[1]*Sxy;   // mount world pos
+                    const mP = projectWorld(mx, mz, mh, aspect);
+                    pushPt((mP.x + 1) * 0.5, (1 - mP.y) * 0.5, Math.min(13, mP.inv * Sxy * 95) * dprNow, OM[0]*1.2*fade, OM[1]*0.4*fade, OM[2]*0.4*fade);
+                    // aim direction: toward the tracked lead point, else rest forward
+                    let dx, dy, dz;
+                    if (c.aim){ dx = c.aim.x - mx; dy = c.aim.h - mh; dz = c.aim.z - mz; }
+                    else { dx = fwdW[0]; dy = fwdW[1]; dz = fwdW[2]; }
+                    const dl = Math.hypot(dx, dy, dz) || 1; dx /= dl; dy /= dl; dz /= dl;
+                    let px = -dz, pz = dx; const pl = Math.hypot(px, pz) || 1; px /= pl; pz /= pl;   // twin-barrel offset (horizontal)
                     for (const sgn of [-1, 1]){
-                        const A = proj([hp[0] + sgn*hpSep, hp[1], hp[2]]);
-                        const B = proj([hp[0] + sgn*hpSep, hp[1] + 0.05, hp[2] + hpLen]);   // barrel points forward + slightly up
-                        pushLineClip(A.x, A.y, B.x, B.y, 0.85 * fade, OM);
+                        const bx = mx + px*sgn*hpSepW, bz = mz + pz*sgn*hpSepW;
+                        const A = projectWorld(bx, bz, mh, aspect);
+                        const B = projectWorld(bx + dx*stub, bz + dz*stub, mh + dy*stub, aspect);
+                        pushLineClip(A.x, A.y, B.x, B.y, 1.0 * fade, OM);   // stubby barrel toward the aim
+                        pushPt((B.x + 1) * 0.5, (1 - B.y) * 0.5, Math.min(8, B.inv * Sxy * 55) * dprNow, OM[0]*1.3*fade, OM[1]*0.4*fade, OM[2]*0.4*fade);
                     }
                 }
                 // big, long exhaust jets — true-3D plume extending back along the world heading
