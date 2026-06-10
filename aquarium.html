@@ -516,10 +516,25 @@ function headingOf(c, dt){
   const turn=(mod(c.yaw-prev+Math.PI,TAU)-Math.PI)/Math.max(dt,1e-4);
   c.roll = lerp(c.roll, clamp(-turn*0.16,-0.55,0.55), k);
 }
-function boundsForce(p, acc, m=2.5, g=6){
-  if (p[0]> BND.x-m) acc[0]-=g;  if (p[0]<-BND.x+m) acc[0]+=g;
-  if (p[2]> BND.z-m) acc[2]-=g;  if (p[2]<-BND.z+m) acc[2]+=g;
-  if (p[1]> BND.y1-1.5) acc[1]-=g; if (p[1]< BND.y0+1.5) acc[1]+=g;
+// proportional turn-back so creatures bank away from walls smoothly
+function boundsForce(p, acc, m=5, g=14){
+  if (p[0]> BND.x-m)  acc[0]-=g*(p[0]-(BND.x-m))/m;
+  if (p[0]<-BND.x+m)  acc[0]+=g*((-BND.x+m)-p[0])/m;
+  if (p[2]> BND.z-m)  acc[2]-=g*(p[2]-(BND.z-m))/m;
+  if (p[2]<-BND.z+m)  acc[2]+=g*((-BND.z+m)-p[2])/m;
+  if (p[1]> BND.y1-m) acc[1]-=g*(p[1]-(BND.y1-m))/m;
+  if (p[1]< BND.y0+m) acc[1]+=g*((BND.y0+m)-p[1])/m;
+}
+// Reynolds steering: accelerate from current velocity toward a desired
+// direction at cruise speed, clamped to a maximum steering force.
+function steerTo(desire, vel, speed, maxF){
+  const dm=Math.hypot(desire[0],desire[1],desire[2]);
+  if (dm<1e-6) return [0,0,0];
+  const s=speed/dm;
+  let sx=desire[0]*s-vel[0], sy=desire[1]*s-vel[1], sz=desire[2]*s-vel[2];
+  const m=Math.hypot(sx,sy,sz);
+  if (m>maxF){ const k=maxF/m; sx*=k; sy*=k; sz*=k; }
+  return [sx,sy,sz];
 }
 
 const LIFE = [
@@ -528,13 +543,16 @@ const LIFE = [
   desc:'a shimmering boid school threading the tank while one shark rides an endless figure-eight',
   init(){
     this.boids=[];
-    for (let i=0;i<60;i++) this.boids.push({
-      pos:[rnd(-10,10), rnd(BND.y0+1,BND.y1-1), rnd(-10,10)],
-      vel:[rnd(-2,2), rnd(-.5,.5), rnd(-2,2)],
-      yaw:0,pitch:0,roll:0, ph:rnd(TAU), wf:rnd(8,11), wa:0.28,
-      size:rnd(0.34,0.52), hj:rnd(-14,14)
-    });
+    for (let i=0;i<70;i++){
+      const v=[rnd(-1,1),rnd(-.3,.3),rnd(-1,1)];
+      this.boids.push({
+        pos:[rnd(-9,9), rnd(BND.y0+1.5,BND.y1-1.5), rnd(-9,9)],
+        vel:v, yaw:0,pitch:0,roll:0, ph:rnd(TAU), wf:rnd(8,11), wa:0.3,
+        size:rnd(0.34,0.5), hj:rnd(-16,16), ms:rnd(4.6,5.8)   // cruise speed
+      });
+    }
     this.shark={ yaw:0,pitch:0,roll:0, ph:0, wf:2.6, wa:0.17, pos:[0,6,0], vel:[1,0,0] };
+    this.goal=[0,8,0];
   },
   update(dt){
     const sh=this.shark;
@@ -544,39 +562,65 @@ const LIFE = [
     const p0=P(u), p1=P(u+e);
     sh.pos=p0; sh.vel=[(p1[0]-p0[0])/e*0.14,(p1[1]-p0[1])/e*0.14,(p1[2]-p0[2])/e*0.14];
     headingOf(sh, dt);
-    // boids
+
+    // a slowly drifting goal so the whole flock travels the volume as a body
+    const g=this.goal;
+    g[0]=Math.cos(t*0.07)*8.5;
+    g[1]=7.8+Math.sin(t*0.05)*3;
+    g[2]=Math.sin(t*0.091)*8.5;
+
+    // --- Reynolds 3D boids: separation + alignment + cohesion -------------
     const B=this.boids;
+    const PERC=6.0, PERC2=PERC*PERC, SEP=2.9, SEP2=SEP*SEP, MF=6;
+    const W_SEP=2.3, W_ALI=1.3, W_COH=0.8, W_GOAL=0.55, W_FLEE=3.2;
     for (const c of B){
-      const acc=[0,0,0];
-      let nx=0,ny=0,nz=0, ax=0,ay=0,az=0, n=0;
+      const v=c.vel, sp0=Math.hypot(v[0],v[1],v[2])||1;
+      const hx=v[0]/sp0, hy=v[1]/sp0, hz=v[2]/sp0;            // heading, for FOV
+      let cx=0,cy=0,cz=0, ax=0,ay=0,az=0, sx=0,sy=0,sz=0, n=0;
       for (const o of B){
         if (o===c) continue;
         const dx=o.pos[0]-c.pos[0], dy=o.pos[1]-c.pos[1], dz=o.pos[2]-c.pos[2];
         const d2=dx*dx+dy*dy+dz*dz;
-        if (d2<36){
-          n++; nx+=o.pos[0]; ny+=o.pos[1]; nz+=o.pos[2];
-          ax+=o.vel[0]; ay+=o.vel[1]; az+=o.vel[2];
-          if (d2<7){ const d=Math.sqrt(d2)||1; acc[0]-=dx/d*6; acc[1]-=dy/d*6; acc[2]-=dz/d*6; }
-        }
+        if (d2>PERC2 || d2===0) continue;
+        const d=Math.sqrt(d2);
+        if ((dx*hx+dy*hy+dz*hz)/d < -0.55) continue;          // ignore behind (~240° FOV)
+        n++;
+        cx+=o.pos[0]; cy+=o.pos[1]; cz+=o.pos[2];             // cohesion: avg position
+        ax+=o.vel[0]; ay+=o.vel[1]; az+=o.vel[2];             // alignment: avg velocity
+        if (d2<SEP2){ const w=1/d2; sx-=dx*w; sy-=dy*w; sz-=dz*w; }  // separation: 1/d^2 away
       }
+      const acc=[0,0,0];
       if (n>0){
-        acc[0]+=(nx/n-c.pos[0])*0.3 + (ax/n-c.vel[0])*0.9;
-        acc[1]+=(ny/n-c.pos[1])*0.3 + (ay/n-c.vel[1])*0.9;
-        acc[2]+=(nz/n-c.pos[2])*0.3 + (az/n-c.vel[2])*0.9;
+        const coh=steerTo([cx/n-c.pos[0], cy/n-c.pos[1], cz/n-c.pos[2]], v, c.ms, MF);
+        const ali=steerTo([ax/n, ay/n, az/n], v, c.ms, MF);
+        acc[0]+=coh[0]*W_COH+ali[0]*W_ALI; acc[1]+=coh[1]*W_COH+ali[1]*W_ALI; acc[2]+=coh[2]*W_COH+ali[2]*W_ALI;
       }
-      // flee the shark (strong, wide radius — the school scatters on approach)
+      if (sx||sy||sz){
+        const sep=steerTo([sx,sy,sz], v, c.ms, MF);
+        acc[0]+=sep[0]*W_SEP; acc[1]+=sep[1]*W_SEP; acc[2]+=sep[2]*W_SEP;
+      }
+      // weak pull toward the travelling goal
+      const go=steerTo([g[0]-c.pos[0], g[1]-c.pos[1], g[2]-c.pos[2]], v, c.ms, MF);
+      acc[0]+=go[0]*W_GOAL; acc[1]+=go[1]*W_GOAL; acc[2]+=go[2]*W_GOAL;
+
+      // flee the shark — overrides flocking inside its radius
       const fx=c.pos[0]-sh.pos[0], fy=c.pos[1]-sh.pos[1], fz=c.pos[2]-sh.pos[2];
       const fd2=fx*fx+fy*fy+fz*fz;
-      const FLEE=12, scared = fd2 < FLEE*FLEE;
-      if (scared){ const fd=Math.sqrt(fd2)||1, str=(FLEE-fd)*6.5;
-        acc[0]+=fx/fd*str; acc[1]+=fy/fd*str; acc[2]+=fz/fd*str; }
+      let panic=1;
+      if (fd2 < 121){                                         // within 11 units
+        const fl=steerTo([fx,fy,fz], v, c.ms*2, MF*2.2);
+        acc[0]+=fl[0]*W_FLEE; acc[1]+=fl[1]*W_FLEE; acc[2]+=fl[2]*W_FLEE;
+        panic=1.9;
+      }
       boundsForce(c.pos, acc);
-      c.vel[0]+=acc[0]*dt*2.2; c.vel[1]+=acc[1]*dt*1.4; c.vel[2]+=acc[2]*dt*2.2;
-      const sp=Math.hypot(c.vel[0],c.vel[1],c.vel[2])||1;
-      const mx = scared ? 11 : 4.6;
-      if (sp>mx){ c.vel[0]*=mx/sp; c.vel[1]*=mx/sp; c.vel[2]*=mx/sp; }
-      if (sp<1.4){ c.vel[0]*=1.05; c.vel[2]*=1.05; }
-      c.pos[0]+=c.vel[0]*dt; c.pos[1]+=c.vel[1]*dt; c.pos[2]+=c.vel[2]*dt;
+
+      // integrate, then hold a cruise speed (key to the murmuration feel)
+      v[0]+=acc[0]*dt; v[1]+=acc[1]*dt; v[2]+=acc[2]*dt;
+      let sp=Math.hypot(v[0],v[1],v[2])||1;
+      const top=c.ms*panic, lo=c.ms*0.78;
+      const tgt = sp>top?top : sp<lo?lo : sp;
+      if (tgt!==sp){ const k=tgt/sp; v[0]*=k; v[1]*=k; v[2]*=k; }
+      c.pos[0]+=v[0]*dt; c.pos[1]+=v[1]*dt; c.pos[2]+=v[2]*dt;
       headingOf(c, dt);
     }
   },
