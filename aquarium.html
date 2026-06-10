@@ -3,975 +3,821 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#05010d">
-<title>NEON REEF — Synthwave Low-Poly Aquarium</title>
+<meta name="theme-color" content="#050510">
+<title>TANK LAB — low-poly neon aquarium concepts</title>
 <style>
-  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#05010d; cursor:none; }
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#050510; }
   #c { display:block; width:100vw; height:100vh; }
-  #ui {
-    position:fixed; left:14px; bottom:12px; z-index:10;
-    font:11px/1.5 'Courier New', monospace; color:#2de2e6;
-    text-shadow:0 0 6px #2de2e6; letter-spacing:.5px;
-    opacity:.55; transition:opacity .6s; user-select:none; pointer-events:none;
+  #panel {
+    position:fixed; left:16px; top:16px; z-index:10;
+    font:11px/1.5 'Courier New', ui-monospace, monospace;
+    color:#9adfe8; letter-spacing:.4px;
+    background:rgba(4,6,14,.78); border:1px solid rgba(94,242,255,.22);
+    border-radius:10px; padding:12px 14px 10px;
+    backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+    transition:opacity .5s; user-select:none;
   }
-  #ui b { color:#ff2a6d; text-shadow:0 0 6px #ff2a6d; }
-  #snd {
-    position:fixed; right:14px; bottom:12px; z-index:10; cursor:pointer;
-    font:11px/1 'Courier New', monospace; color:#b967ff;
-    text-shadow:0 0 6px #b967ff; opacity:.6; transition:opacity .3s;
-    border:1px solid #b967ff60; border-radius:4px; padding:6px 9px;
-    background:rgba(20,4,40,.4); user-select:none;
+  body.idle #panel { opacity:0; pointer-events:none; }
+  #panel .ttl { color:#5ef2ff; font-weight:bold; margin-bottom:8px; text-shadow:0 0 8px rgba(94,242,255,.6); }
+  #panel .ttl span { color:#4a6f7a; font-weight:normal; }
+  #panel .lbl { color:#ff5ec8; font-size:10px; margin:7px 0 3px; text-shadow:0 0 6px rgba(255,94,200,.5); }
+  #panel button {
+    font:10px 'Courier New', ui-monospace, monospace; letter-spacing:.4px;
+    color:#7ccfdd; background:transparent; cursor:pointer;
+    border:1px solid rgba(94,242,255,.28); border-radius:5px;
+    padding:4px 8px; margin:0 4px 3px 0;
   }
-  #snd:hover { opacity:1; }
-  body.idle #ui, body.idle #snd { opacity:0; }
+  #panel button:hover { border-color:#5ef2ff; color:#bdf6ff; }
+  #panel button.on {
+    color:#5ef2ff; border-color:#5ef2ff; background:rgba(14,43,51,.85);
+    text-shadow:0 0 6px rgba(94,242,255,.8);
+  }
+  #panel .desc { color:#54808c; font-size:10px; max-width:300px; min-height:13px; }
+  #panel .keys { color:#3c5a64; font-size:9px; margin-top:9px; border-top:1px solid rgba(94,242,255,.12); padding-top:6px; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="ui">NEON&nbsp;REEF&nbsp;&nbsp;·&nbsp;&nbsp;synthwave low-poly aquarium&nbsp;&nbsp;·&nbsp;&nbsp;<b>just breathe</b></div>
-<div id="snd">♪ sound: off</div>
+<div id="panel">
+  <div class="ttl">TANK LAB <span>// low-poly neon aquarium — 3×3×3 concepts</span></div>
+  <div class="lbl">TANK</div>
+  <div><button id="bt0"></button><button id="bt1"></button><button id="bt2"></button></div>
+  <div class="desc" id="dt"></div>
+  <div class="lbl">DECOR</div>
+  <div><button id="bd0"></button><button id="bd1"></button><button id="bd2"></button></div>
+  <div class="desc" id="dd"></div>
+  <div class="lbl">INHABITANTS</div>
+  <div><button id="bl0"></button><button id="bl1"></button><button id="bl2"></button></div>
+  <div class="desc" id="dl"></div>
+  <div class="keys">keys&nbsp; 1·2·3 tank &nbsp;·&nbsp; Q·W·E decor &nbsp;·&nbsp; A·S·D life &nbsp;·&nbsp; H hide ui</div>
+</div>
 <script>
 "use strict";
-/* ============================================================================
-   NEON REEF — a self-contained synthwave / Tron low-poly 3D aquarium.
-   Hand-rolled flat-shaded software renderer (Star Fox SNES vibe):
-   3D verts -> camera space -> perspective projection -> painter's sort.
-   Built from 50 brainstormed concepts (color, geometry, motion, scene, mood).
-   ============================================================================ */
+/* ===========================================================================
+   TANK LAB — low-poly Star Fox style aquarium, dark neon.
+   Software 3D: world verts -> orbit camera -> perspective -> painter sort,
+   flat-shaded fills + bright wireframe edge strokes, fog to black.
+   3 tanks × 3 decor sets × 3 inhabitant sets, switchable live.
+   =========================================================================== */
 
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d', { alpha:false });
-let W = 0, H = 0, DPR = 1, focal = 1, cx = 0, cy = 0;
+let W=0, H=0, focal=1, cx=0, cyc=0, vigGrad=null;
 
 function resize(){
-  DPR = Math.min(2, window.devicePixelRatio || 1);
+  const DPR = Math.min(1.75, window.devicePixelRatio||1);
   W = window.innerWidth; H = window.innerHeight;
-  canvas.width  = Math.floor(W * DPR);
-  canvas.height = Math.floor(H * DPR);
-  canvas.style.width = W + 'px';
-  canvas.style.height = H + 'px';
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  focal = H * 0.95;          // field of view scaling
-  cx = W * 0.5; cy = H * 0.5;
+  canvas.width = Math.floor(W*DPR); canvas.height = Math.floor(H*DPR);
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  focal = H*1.05; cx = W/2; cyc = H/2;
+  vigGrad = ctx.createRadialGradient(cx,cyc,Math.min(W,H)*0.35, cx,cyc,Math.max(W,H)*0.78);
+  vigGrad.addColorStop(0,'rgba(0,0,0,0)');
+  vigGrad.addColorStop(1,'rgba(0,0,5,0.55)');
 }
 window.addEventListener('resize', resize);
 resize();
 
-/* ----------------------------------------------------------------- helpers */
-const TAU = Math.PI * 2;
-const rnd  = (a=1, b) => b===undefined ? Math.random()*a : a + Math.random()*(b-a);
-const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
-const lerp  = (a, b, t) => a + (b - a) * t;
-const mod   = (n, m) => ((n % m) + m) % m;
-
-// short-arc lerp for angles
-function lerpAngle(a, b, t){
-  let d = mod(b - a + Math.PI, TAU) - Math.PI;
-  return a + d * t;
-}
-
-/* ------------------------------------------------------------ scene volume */
-// Fish swim inside this world box. +z = into the screen (away from camera).
-const BOX = { x:42, yTop:16, yBot:-15, zNear:6, zFar:62 };
-const FLOOR_Y = BOX.yBot - 1;
-
-/* ------------------------------------------------------------------ camera */
-// Slowly drifting Lissajous camera that never holds still (concept: drift).
-const cam = { pos:[0,1,-30], tgt:[0,0,26] };
-const view = { r:[1,0,0], u:[0,1,0], f:[0,0,1] };
-
-function buildView(){
-  // forward
-  let fx = cam.tgt[0]-cam.pos[0], fy = cam.tgt[1]-cam.pos[1], fz = cam.tgt[2]-cam.pos[2];
-  let fl = Math.hypot(fx,fy,fz) || 1; fx/=fl; fy/=fl; fz/=fl;
-  // right = forward × worldUp(0,1,0) = (-fz, 0, fx)
-  let rx = -fz, ry = 0, rz = fx;
-  let rl = Math.hypot(rx,ry,rz) || 1; rx/=rl; ry/=rl; rz/=rl;
-  // up = right × forward
-  let ux = ry*fz - rz*fy, uy = rz*fx - rx*fz, uz = rx*fy - ry*fx;
-  view.r=[rx,ry,rz]; view.u=[ux,uy,uz]; view.f=[fx,fy,fz];
-}
-
-// world point -> {x,y (screen), z (camera depth), vis}
-function project(p){
-  const dx = p[0]-cam.pos[0], dy = p[1]-cam.pos[1], dz = p[2]-cam.pos[2];
-  const x = dx*view.r[0] + dy*view.r[1] + dz*view.r[2];
-  const y = dx*view.u[0] + dy*view.u[1] + dz*view.u[2];
-  const z = dx*view.f[0] + dy*view.f[1] + dz*view.f[2];
-  if (z < 0.4) return { vis:false };
-  const inv = focal / z;
-  return { vis:true, x: cx + x*inv, y: cy - y*inv, z, inv };
-}
-
-/* ----------------------------------------------------------------- palette */
-// Curated synthwave palettes; we slowly cross-fade between them (mood drift).
-const PALETTES = [
-  { name:'magenta dusk', accents:[330, 186, 270, 200], grid:328, sun1:'#ff36b0', sun2:'#ffd23f' },
-  { name:'toxic lagoon', accents:[160, 186, 286, 110], grid:166, sun1:'#19f3b6', sun2:'#7df9ff' },
-  { name:'violet deep',  accents:[270, 300, 210, 320], grid:280, sun1:'#b967ff', sun2:'#ff61dc' },
-  { name:'electric tide',accents:[200, 186, 326, 250], grid:200, sun1:'#01cdfe', sun2:'#05ffa1' },
-];
-let palIdx = 0, palT = 1, palDur = 14;      // cross-fade timer
-let pal = clonePal(PALETTES[0]);
-let palTarget = pal;
-function clonePal(p){ return { name:p.name, accents:p.accents.slice(), grid:p.grid, sun1:p.sun1, sun2:p.sun2 }; }
-let nextPalAt = 95;                          // seconds until first palette change
-let hueShift = 0;                            // continuous slow global hue rotation
-
-function lerpHue(a,b,t){ let d=mod(b-a+180,360)-180; return mod(a+d*t,360); }
-function lerpColor(c1,c2,t){ // hex -> hex
-  const a=hex2rgb(c1), b=hex2rgb(c2);
-  return rgb2hex(lerp(a[0],b[0],t), lerp(a[1],b[1],t), lerp(a[2],b[2],t));
-}
+/* ----------------------------------------------------------------- math */
+const TAU = Math.PI*2;
+const rnd = (a=1,b)=> b===undefined ? Math.random()*a : a+Math.random()*(b-a);
+const clamp = (v,lo,hi)=> v<lo?lo : v>hi?hi : v;
+const lerp = (a,b,t)=> a+(b-a)*t;
+const mod = (n,m)=> ((n%m)+m)%m;
+const lerpHue = (a,b,t)=>{ const d=mod(b-a+180,360)-180; return mod(a+d*t,360); };
+function norm3(v){ const l=Math.hypot(v[0],v[1],v[2])||1; return [v[0]/l,v[1]/l,v[2]/l]; }
+function cross3(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
 function hex2rgb(h){ const n=parseInt(h.slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; }
-function rgb2hex(r,g,b){ return '#'+((1<<24)+(Math.round(r)<<16)+(Math.round(g)<<8)+Math.round(b)).toString(16).slice(1); }
 
-/* ----------------------------------------------------------- day/night arc */
-// 0..1 loop over ~10 min: dawn -> noon -> dusk -> deep. Drives sky + ambient.
-let dayPhase = 0.55;
-const DAY_LEN = 600;
-const SKY_KEYS = [ // [top, mid, deep] gradients per phase quarter
-  { p:0.00, top:'#3a1247', mid:'#7a1f6b', deep:'#1a0633' }, // dawn coral
-  { p:0.25, top:'#102a55', mid:'#1f5fa6', deep:'#06203a' }, // noon cyan
-  { p:0.50, top:'#3a0a4e', mid:'#a01f6b', deep:'#1a0233' }, // dusk magenta
-  { p:0.75, top:'#070024', mid:'#16093f', deep:'#03000f' }, // deep indigo
-];
-function skyAt(phase){
-  const n = SKY_KEYS.length;
-  const f = phase*n; const i = Math.floor(f)%n; const t = f-Math.floor(f);
-  const a = SKY_KEYS[i], b = SKY_KEYS[(i+1)%n];
-  return { top:lerpColor(a.top,b.top,t), mid:lerpColor(a.mid,b.mid,t), deep:lerpColor(a.deep,b.deep,t) };
+const LIGHT = norm3([0.4, 0.82, -0.41]);
+const FOG0 = 34, FOG1 = 95;
+const fogAt = z => clamp(1-(z-FOG0)/(FOG1-FOG0), 0, 1);
+
+// creatures swim inside this volume (fits every tank)
+const BND = { x:14, z:14, y0:3, y1:12.5 };
+
+/* --------------------------------------------------------------- camera */
+const cam = { pos:[0,10,-40], r:[1,0,0], u:[0,1,0], f:[0,0,1] };
+function updateCamera(t){
+  const ang = t*0.05;
+  const R = 40 + Math.sin(t*0.021)*4;
+  cam.pos = [Math.sin(ang)*R, 10.5+Math.sin(t*0.033)*2.5, -Math.cos(ang)*R];
+  const tgt = [0, 5.2, 0];
+  let f = norm3([tgt[0]-cam.pos[0], tgt[1]-cam.pos[1], tgt[2]-cam.pos[2]]);
+  let r = norm3([-f[2], 0, f[0]]);            // f × worldUp
+  cam.f=f; cam.r=r; cam.u=cross3(r,f);
 }
-let ambient = 0.6;
-
-/* =========================================================================
-   LOW-POLY MESH LIBRARY
-   Each mesh: { verts:[[x,y,z]...], faces:[{i:[a,b,c], hue, line, both}],
-                wig:[per-vertex tail-wiggle weight], kind }
-   Fish forward = +z, width = x, height = y.  Flat-shaded, painter-sorted.
-   ========================================================================= */
-
-function fishMesh(scale=[1,1,1]){
-  // 6 belt verts + nose + tail-base + 2 tail-fin tips + dorsal + 2 pectoral
-  const V = [
-    [0,0,1.35],            // 0 nose
-    [0,0,-1.05],           // 1 tail base
-    [0,0.5,0.05],          // 2 top
-    [0,-0.42,0.05],        // 3 bottom
-    [-0.5,0.02,0.05],      // 4 left
-    [0.5,0.02,0.05],       // 5 right
-    [0,0.62,-1.65],        // 6 tail top
-    [0,-0.62,-1.65],       // 7 tail bottom
-    [0,0.85,-0.2],         // 8 dorsal tip
-  ];
-  const F = [
-    // front cone nose->belt
-    {i:[0,2,5]}, {i:[0,5,3]}, {i:[0,3,4]}, {i:[0,4,2]},
-    // rear cone tailbase->belt
-    {i:[1,5,2]}, {i:[1,3,5]}, {i:[1,4,3]}, {i:[1,2,4]},
-    // caudal fin (double sided, flat)
-    {i:[1,6,7], both:true, fin:true},
-    // dorsal fin (double sided)
-    {i:[2,8,1], both:true, fin:true},
-  ];
-  return finishMesh(V, F, scale, 'fish');
+function project(p){
+  const dx=p[0]-cam.pos[0], dy=p[1]-cam.pos[1], dz=p[2]-cam.pos[2];
+  const z = dx*cam.f[0]+dy*cam.f[1]+dz*cam.f[2];
+  if (z < 0.5) return { vis:false };
+  const x = dx*cam.r[0]+dy*cam.r[1]+dz*cam.r[2];
+  const y = dx*cam.u[0]+dy*cam.u[1]+dz*cam.u[2];
+  const inv = focal/z;
+  return { vis:true, x:cx+x*inv, y:cyc-y*inv, z, inv };
 }
 
-function sharkMesh(){
-  const m = fishMesh([0.85, 0.95, 2.15]);
-  m.kind = 'shark';
-  return m;
-}
-function angelMesh(){
-  const m = fishMesh([0.42, 1.75, 0.95]);
-  m.kind = 'angel';
-  return m;
-}
+/* ---------------------------------------------------- render list + draw */
+const RL = [];
 
-function mantaMesh(){
-  // Flat diamond ray: center spine + swept wings, slight dihedral.
-  const V = [
-    [0,0,1.1],     // 0 head
-    [0,0,-1.4],    // 1 tail root
-    [-2.3,0.12,0], // 2 left tip
-    [2.3,0.12,0],  // 3 right tip
-    [-0.7,0,-1.5], // 4 left trailing
-    [0.7,0,-1.5],  // 5 right trailing
-    [0,-0.05,-3.2],// 6 tail spike
-  ];
-  const F = [
-    {i:[0,2,4], both:true}, {i:[0,4,1], both:true},
-    {i:[0,1,5], both:true}, {i:[0,5,3], both:true},
-    {i:[1,4,6], both:true, line:true}, {i:[1,6,5], both:true, line:true},
-  ];
-  const m = finishMesh(V, F, [1,1,1], 'manta');
-  // wings flap: weight by |x|
-  m.flap = m.verts.map(v => clamp(Math.abs(v[0])/2.3, 0, 1));
-  return m;
-}
-
-function jellyMesh(){
-  // Bell dome: apex + ring of 8; tentacles are line faces hanging down.
-  const seg = 8, r = 0.85, V = [[0,0.7,0]];
-  for (let k=0;k<seg;k++){ const a=k/seg*TAU; V.push([Math.cos(a)*r, 0, Math.sin(a)*r]); }
-  const F = [];
-  for (let k=0;k<seg;k++){ F.push({i:[0, 1+k, 1+(k+1)%seg], both:true}); }
-  // tentacles: lines from each ring vert downward (rendered as line faces)
-  const tent = [];
-  for (let k=0;k<seg;k+=1){
-    const top = 1+k, bx=V[top][0]*0.8, bz=V[top][2]*0.8;
-    const segs = [];
-    for (let s=1;s<=5;s++){ segs.push([bx, -s*0.45, bz]); }
-    tent.push({ top, pts: segs.map(()=>[0,0,0]), base:[bx,bz] });
+// world verts + faces -> shaded polys.  st: {h,s,l0,l1,a,edge,edgeA,both,lOf}
+function gatherFaces(world, faces, st){
+  const s  = st.s  ?? 70, l0 = st.l0 ?? 16, l1 = st.l1 ?? 30;
+  const eD = st.edge ?? 30, eA = st.edgeA ?? 0.8, aMul = st.a ?? 1;
+  const pj = new Array(world.length);
+  for (const f of faces){
+    const idx = f.i;
+    let ok = true;
+    for (const k of idx){ if (pj[k]===undefined) pj[k]=project(world[k]); if(!pj[k].vis){ok=false;break;} }
+    if (!ok) continue;
+    const a=pj[idx[0]], b=pj[idx[1]], c=pj[idx[2]];
+    const wind = (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);
+    const both = f.both || st.both;
+    if (!both && wind<=0) continue;
+    const A=world[idx[0]], B=world[idx[1]], C=world[idx[2]];
+    const n = norm3(cross3([B[0]-A[0],B[1]-A[1],B[2]-A[2]],[C[0]-A[0],C[1]-A[1],C[2]-A[2]]));
+    let lum = n[0]*LIGHT[0]+n[1]*LIGHT[1]+n[2]*LIGHT[2];
+    if (both) lum = Math.abs(lum);
+    lum = clamp(lum,0,1);
+    let depth=0; for (const k of idx) depth += pj[k].z; depth/=idx.length;
+    const fog = fogAt(depth);
+    if (fog<0.02) continue;
+    const base = st.lOf ? st.lOf(f) : (f.l0 ?? l0);
+    RL.push({ pts: idx.map(k=>pj[k]), depth,
+      h: f.h ?? st.h, s: f.s ?? s, l: clamp(base + lum*(f.l1 ?? l1), 0, 92),
+      a: aMul*fog, eA: (f.noEdge?0:eA), eD });
   }
-  const m = finishMesh(V, F, [1,1,1], 'jelly');
-  m.tent = tent;
-  m.pulse = 0;
-  return m;
 }
-
-function eelMesh(){
-  // Segmented serpentine body: 7 rings of 4 verts -> traveling sine each frame.
-  const rings = 8, V = [], F = [];
-  for (let r=0;r<rings;r++){
-    const z = 1.5 - r*0.85;
-    const rad = 0.42 * (1 - r/(rings+2)) + 0.08;
-    V.push([0,rad,z],[rad,0,z],[0,-rad,z],[-rad,0,z]);
-  }
-  for (let r=0;r<rings-1;r++){
-    const a=r*4, b=(r+1)*4;
-    for (let s=0;s<4;s++){
-      const s2=(s+1)%4;
-      F.push({i:[a+s, b+s, b+s2]});
-      F.push({i:[a+s, b+s2, a+s2]});
+function line3(p, q, h, s, l, a, w=1.25){
+  const A=project(p), B=project(q);
+  if (!A.vis || !B.vis) return;
+  const depth=(A.z+B.z)/2, fog=fogAt(depth);
+  if (fog<0.02 || a<=0) return;
+  RL.push({ line:true, x1:A.x, y1:A.y, x2:B.x, y2:B.y, depth, h, s, l, a:a*fog, w });
+}
+function point3(p, r, h, s, l, a){
+  const P=project(p); if(!P.vis) return;
+  const fog=fogAt(P.z); if(fog<0.05) return;
+  RL.push({ point:true, x:P.x, y:P.y, r:Math.max(1.2, r*P.inv), depth:P.z, h, s, l, a:a*fog });
+}
+function flush(){
+  RL.sort((a,b)=> b.depth-a.depth);
+  ctx.lineJoin='round'; ctx.lineCap='round';
+  for (const f of RL){
+    if (f.line){
+      ctx.strokeStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a})`;
+      ctx.lineWidth=f.w;
+      ctx.beginPath(); ctx.moveTo(f.x1,f.y1); ctx.lineTo(f.x2,f.y2); ctx.stroke();
+      continue;
+    }
+    if (f.point){
+      ctx.save(); ctx.globalCompositeOperation='lighter';
+      ctx.fillStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a*0.25})`;
+      ctx.beginPath(); ctx.arc(f.x,f.y,f.r*3.2,0,TAU); ctx.fill();
+      ctx.fillStyle=`hsla(${f.h},${f.s}%,${Math.min(92,f.l+20)}%,${f.a})`;
+      ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,TAU); ctx.fill();
+      ctx.restore();
+      continue;
+    }
+    ctx.beginPath();
+    ctx.moveTo(f.pts[0].x, f.pts[0].y);
+    for (let k=1;k<f.pts.length;k++) ctx.lineTo(f.pts[k].x, f.pts[k].y);
+    ctx.closePath();
+    ctx.fillStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a*0.9})`;
+    ctx.fill();
+    if (f.eA>0){
+      ctx.strokeStyle=`hsla(${f.h},${f.s}%,${Math.min(88,f.l+f.eD)}%,${f.a*f.eA})`;
+      ctx.lineWidth=1;
+      ctx.stroke();
+    } else { // seal AA seams
+      ctx.strokeStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a*0.9})`;
+      ctx.lineWidth=1; ctx.stroke();
     }
   }
-  const m = finishMesh(V, F, [1,1,1], 'eel');
-  m.rings = rings;
-  return m;
 }
 
-function whaleMesh(){
-  // Big gentle low-poly whale silhouette (concept: rare flyby event).
-  const m = fishMesh([3.4, 2.6, 6.5]);
-  m.kind = 'whale';
-  return m;
-}
-
-function finishMesh(V, F, scale, kind){
-  const verts = V.map(v => [v[0]*scale[0], v[1]*scale[1], v[2]*scale[2]]);
-  // tail-wiggle weight: 0 at nose (+z), 1 at tail (-z)
-  let zmin=Infinity, zmax=-Infinity;
-  for (const v of verts){ if(v[2]<zmin)zmin=v[2]; if(v[2]>zmax)zmax=v[2]; }
-  const wig = verts.map(v => clamp((zmax - v[2])/(zmax-zmin+0.001), 0, 1));
-  return { verts, faces:F, wig, kind, scale };
-}
-
-/* =========================================================================
-   CREATURES — swimming agents with boids-lite steering + body animation.
-   ========================================================================= */
-const creatures = [];
-const SPECIES = ['fish','fish','fish','angel','shark','manta','jelly','eel'];
-
-function spawnCreature(kind, opt={}){
-  kind = kind || SPECIES[(Math.random()*SPECIES.length)|0];
-  let mesh;
-  switch(kind){
-    case 'shark': mesh = sharkMesh(); break;
-    case 'angel': mesh = angelMesh(); break;
-    case 'manta': mesh = mantaMesh(); break;
-    case 'jelly': mesh = jellyMesh(); break;
-    case 'eel':   mesh = eelMesh();   break;
-    case 'whale': mesh = whaleMesh(); break;
-    default:      mesh = fishMesh();  kind='fish';
+/* ------------------------------------------------- transforms + builders */
+function transformPts(verts, pos, yaw=0, pitch=0, roll=0, scl=[1,1,1]){
+  const cy=Math.cos(yaw), sy=Math.sin(yaw), cp=Math.cos(pitch), sp=Math.sin(pitch);
+  const cr=Math.cos(roll), sr=Math.sin(roll);
+  const out=new Array(verts.length);
+  for (let k=0;k<verts.length;k++){
+    let x=verts[k][0]*scl[0], y=verts[k][1]*scl[1], z=verts[k][2]*scl[2];
+    let x1=x*cr-y*sr, y1=x*sr+y*cr;                 // roll  (z axis)
+    let y2=y1*cp-z*sp, z2=y1*sp+z*cp;               // pitch (x axis)
+    let x3=x1*cy+z2*sy, z3=-x1*sy+z2*cy;            // yaw   (y axis)
+    out[k]=[x3+pos[0], y2+pos[1], z3+pos[2]];
   }
-  const accents = pal.accents;
-  const c = {
-    kind, mesh,
-    pos: opt.pos || [rnd(-BOX.x,BOX.x), rnd(BOX.yBot+3,BOX.yTop-3), rnd(BOX.zNear+4, BOX.zFar-6)],
-    vel: opt.vel || [rnd(-1,1), rnd(-0.3,0.3), rnd(-1,1)],
-    yaw:0, pitch:0, roll:0,
-    hue: opt.hue!==undefined ? opt.hue : accents[(Math.random()*accents.length)|0] + rnd(-12,12),
-    size: opt.size || ({manta:rnd(2.1,3), shark:rnd(2.4,3.4), jelly:rnd(1.3,2.1), eel:rnd(1.5,2.3), angel:rnd(1.1,1.7), whale:1, fish:rnd(0.9,1.7)}[kind]),
-    speed: opt.speed || ({shark:rnd(7,10), manta:rnd(4,6), jelly:rnd(1.2,2), eel:rnd(4,6), whale:opt.speed||3.2, fish:rnd(4,7), angel:rnd(3,5)}[kind]),
-    maxForce: ({jelly:2, whale:1.5}[kind] || 9),
-    wagFreq: rnd(6, 11),
-    wagPhase: rnd(0, TAU),
-    wagAmp: ({eel:0.55, manta:0, jelly:0, shark:0.22}[kind] ?? 0.32),
-    wander: rnd(0, TAU),
-    dart: 0,
-    scripted: opt.scripted || false,
-    life: opt.life || Infinity,
-    age: 0,
-    fade: 0,            // 0..1 spawn-in
-  };
-  // jelly drifts mostly upward and slow
-  if (kind==='jelly'){ c.vel=[rnd(-0.4,0.4), rnd(0.4,1), rnd(-0.4,0.4)]; }
-  creatures.push(c);
-  return c;
+  return out;
+}
+function octa(){ // unit bipyramid: 6 verts, 8 tris
+  return { v:[[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]],
+    f:[{i:[0,2,4],both:1},{i:[0,4,3],both:1},{i:[0,3,5],both:1},{i:[0,5,2],both:1},
+       {i:[1,4,2],both:1},{i:[1,3,4],both:1},{i:[1,5,3],both:1},{i:[1,2,5],both:1}] };
+}
+function box(w,h,d){
+  const x=w/2, y=h/2, z=d/2;
+  return { v:[[-x,-y,-z],[x,-y,-z],[x,y,-z],[-x,y,-z],[-x,-y,z],[x,-y,z],[x,y,z],[-x,y,z]],
+    f:[{i:[0,1,2,3],both:1},{i:[4,5,6,7],both:1},{i:[0,1,5,4],both:1},
+       {i:[2,3,7,6],both:1},{i:[0,3,7,4],both:1},{i:[1,2,6,5],both:1}] };
+}
+function prism(sides, r, h){
+  const v=[], f=[];
+  for (let k=0;k<sides;k++){ const a=k/sides*TAU; v.push([Math.cos(a)*r,0,Math.sin(a)*r]); }
+  for (let k=0;k<sides;k++){ const a=k/sides*TAU; v.push([Math.cos(a)*r,h,Math.sin(a)*r]); }
+  for (let k=0;k<sides;k++){ const k2=(k+1)%sides; f.push({i:[k,k2,sides+k2,sides+k],both:1}); }
+  f.push({i:Array.from({length:sides},(_,k)=>sides+k), both:1});
+  return { v, f };
 }
 
-const SOFT_CAP = 24;        // gentle population target (breathing)
-function seedPopulation(){
-  spawnCreature('shark'); spawnCreature('manta');
-  for (let i=0;i<3;i++) spawnCreature('jelly');
-  spawnCreature('eel'); spawnCreature('eel');
-  for (let i=0;i<5;i++) spawnCreature('angel');
-  while (creatures.length < SOFT_CAP) spawnCreature('fish');
-}
-
-// spatial steering: schooling among same-kind 'fish'/'angel', plus global current
-function steer(c, dt){
-  if (c.scripted){ // whale just cruises straight, slight bob
-    c.pos[1] += Math.sin(c.age*0.6)*0.01;
-    return;
+/* -------------------------------------------------------- palette (live) */
+// the active tank defines bg + 3 accent hues; everything else samples these,
+// smoothed each frame so a tank switch recolors the whole scene gracefully.
+const PAL = { bg:[5,5,16], h:[185,300,55] };
+function updatePal(dt, tank){
+  const k = 1-Math.exp(-dt*2.2);
+  const tb = hex2rgb(tank.bg);
+  for (let i=0;i<3;i++){
+    PAL.bg[i] = lerp(PAL.bg[i], tb[i], k);
+    PAL.h[i]  = lerpHue(PAL.h[i], tank.hues[i], k);
   }
-  const acc=[0,0,0];
-  // --- global slow current field (whole tank breathes) ---
-  const cur = currentField(c.pos, t);
-  acc[0]+=cur[0]; acc[1]+=cur[1]; acc[2]+=cur[2];
+}
 
-  if (c.kind==='jelly'){
-    // pulse-driven gentle upward thrust + slow wander, sink when reaching top
-    c.mesh.pulse += dt;
-    const p = (Math.sin(c.mesh.pulse*1.7)*0.5+0.5);
-    acc[1] += (c.pos[1] > BOX.yTop-3 ? -0.6 : (p>0.85?2.2:0.1));
-    acc[0] += Math.cos(c.wander)*0.4; acc[2]+=Math.sin(c.wander)*0.4;
-    c.wander += rnd(-0.04,0.04);
-  } else {
-    // wander steering (organic meander)
-    c.wander += rnd(-0.5,0.5)*dt*3;
-    const sp = Math.hypot(c.vel[0],c.vel[1],c.vel[2])||1;
-    const hx=c.vel[0]/sp, hy=c.vel[1]/sp, hz=c.vel[2]/sp;
-    acc[0]+= hx*2 + Math.cos(c.wander)*2.5;
-    acc[1]+= hy*1 + Math.sin(c.wander*0.7)*0.8;
-    acc[2]+= hz*2 + Math.sin(c.wander)*2.5;
+/* ===========================================================================
+   TANKS — each has ONE signature element.
+   =========================================================================== */
+const TANKS = [
+{ /* ------------------------------------------------------------ VOID GRID */
+  name:'VOID GRID',
+  desc:'an endless neon lattice dissolving into black, swept by a slow radial pulse',
+  bg:'#050510', hues:[185,300,55],
+  init(){ this.pt = 0; },
+  update(dt){ this.pt = (this.pt+dt)%7; },
+  draw2d(){ // magenta horizon band where the grid meets the void
+    const hp = project([cam.pos[0]+cam.f[0]*600, cam.pos[1], cam.pos[2]+cam.f[2]*600]);
+    if (!hp.vis) return;
+    const g = ctx.createLinearGradient(0, hp.y-26, 0, hp.y+26);
+    g.addColorStop(0,'rgba(0,0,0,0)');
+    g.addColorStop(0.5,`hsla(${PAL.h[1]},100%,60%,0.20)`);
+    g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=g; ctx.fillRect(0, hp.y-26, W, 52);
+  },
+  gather(a){
+    const S=6, EXT=48, SEG=12;
+    for (let x=-EXT; x<=EXT; x+=S){
+      const major = mod(x,18)===0;
+      for (let z=-EXT; z<EXT; z+=SEG)
+        line3([x,0,z],[x,0,z+SEG], PAL.h[0], 90, major?58:46, a*(major?0.5:0.3));
+    }
+    for (let z=-EXT; z<=EXT; z+=S){
+      const major = mod(z,18)===0;
+      for (let x=-EXT; x<EXT; x+=SEG)
+        line3([x,0,z],[x+SEG,0,z], PAL.h[0], 90, major?58:46, a*(major?0.5:0.3));
+    }
+    // signature: expanding pulse ring
+    const pr = this.pt/7*52;
+    if (pr>0.5 && pr<50){
+      const al = (1-pr/52)*0.85*a, n=44;
+      for (let k=0;k<n;k++){
+        const a0=k/n*TAU, a1=(k+1)/n*TAU;
+        line3([Math.cos(a0)*pr,0.05,Math.sin(a0)*pr],[Math.cos(a1)*pr,0.05,Math.sin(a1)*pr],
+              PAL.h[1], 100, 65, al, 1.6);
+      }
+    }
+  }
+},
+{ /* ----------------------------------------------------------- GLASS CELL */
+  name:'GLASS CELL',
+  desc:'a wireframe containment cube in the void — corner nodes breathe, data runs the edges',
+  bg:'#03060c', hues:[165,210,320],
+  init(){
+    const s=16, h=17;
+    this.C = [[-s,0,-s],[s,0,-s],[s,0,s],[-s,0,s],[-s,h,-s],[s,h,-s],[s,h,s],[-s,h,s]];
+    this.E = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+    this.oct = octa();
+    this.pulse = { wait:rnd(1.5,3), u:-1, e:0 };
+  },
+  update(dt){
+    const p=this.pulse;
+    if (p.u>=0){ p.u+=dt/0.9; if(p.u>1){ p.u=-1; p.wait=rnd(2,4.5); } }
+    else { p.wait-=dt; if(p.wait<=0){ p.u=0; p.e=(Math.random()*12)|0; } }
+  },
+  draw2d(){},
+  gather(a){
+    // floor: dark slab + faint panel lines
+    gatherFaces([[-16,0,-16],[16,0,-16],[16,0,16],[-16,0,16]], [{i:[0,1,2,3],both:1}],
+      { h:PAL.h[1], s:40, l0:5, l1:5, a:a, edgeA:0 });
+    for (let k=-12; k<=12; k+=4){
+      line3([k,0.04,-16],[k,0.04,16], PAL.h[1], 60, 40, 0.14*a);
+      line3([-16,0.04,k],[16,0.04,k], PAL.h[1], 60, 40, 0.14*a);
+    }
+    // the cube
+    for (const [i,j] of this.E)
+      line3(this.C[i], this.C[j], PAL.h[0], 95, 56, 0.8*a, 1.4);
+    // breathing corner nodes
+    for (let k=0;k<8;k++){
+      const br = 38 + Math.sin(t*0.8 + k*1.7)*16;
+      gatherFaces(transformPts(this.oct.v, this.C[k], 0,0,0, [0.5,0.6,0.5]), this.oct.f,
+        { h:PAL.h[1], s:90, l0:br, l1:14, a:a, edgeA:0.9, edge:24 });
+    }
+    // data pulse running an edge
+    const p=this.pulse;
+    if (p.u>=0){
+      const [i,j]=this.E[p.e], A=this.C[i], B=this.C[j];
+      const u0=p.u*0.92, u1=Math.min(1,u0+0.08);
+      line3([lerp(A[0],B[0],u0),lerp(A[1],B[1],u0),lerp(A[2],B[2],u0)],
+            [lerp(A[0],B[0],u1),lerp(A[1],B[1],u1),lerp(A[2],B[2],u1)],
+            PAL.h[0], 100, 88, 0.95*a, 2.4);
+    }
+  }
+},
+{ /* -------------------------------------------------------- ABYSS FISSURE */
+  name:'ABYSS FISSURE',
+  desc:'dark faceted seafloor split by one jagged magma crack flickering to the horizon',
+  bg:'#070310', hues:[265,25,190],
+  init(){
+    const N=14, EXT=27, meander = z => Math.sin(z*0.16)*4;
+    const V=[], F=[];
+    const hgt=(x,z)=>{
+      let h = (Math.sin(x*0.31)+Math.cos(z*0.27))*0.45
+            + Math.sin(x*0.83+z*0.51)*0.3 + 0.9;
+      const d = Math.abs(x - meander(z));
+      return h - Math.max(0, 3.4-d)*1.3;   // carve the trench
+    };
+    for (let j=0;j<=N;j++) for (let i=0;i<=N;i++){
+      const x=-EXT+i/N*EXT*2, z=-EXT+j/N*EXT*2;
+      V.push([x, hgt(x,z), z]);
+    }
+    for (let j=0;j<N;j++) for (let i=0;i<N;i++){
+      const k=j*(N+1)+i;
+      const f={ i:[k, k+1, k+N+2, k+N+1], both:1 };
+      // glow keyed to depth: only the carved canyon floor burns, walls fade out
+      const yC=(V[k][1]+V[k+1][1]+V[k+N+1][1]+V[k+N+2][1])/4;
+      f.em = clamp((-yC - 0.4)/2.2, 0, 1);
+      f.ph = rnd(TAU);
+      f.stroke = Math.random()<0.28;
+      F.push(f);
+    }
+    this.V=V; this.F=F;
+  },
+  update(){},
+  draw2d(){},
+  gather(a){
+    gatherFaces(this.V, this.F, {
+      h:PAL.h[0], s:45, l0:8, l1:11, a:a, edgeA:0, both:1,
+      lOf:(f)=> f.em>0 ? 8 + f.em*(26 + Math.sin(t*1.6+f.ph)*8) : 8
+    });
+    // re-pass: hue + edges for the emissive trench / ridge strokes
+    for (const f of this.F){
+      if (f.em>0.15){
+        const flick = 34 + f.em*(28 + Math.sin(t*1.6+f.ph)*9);
+        gatherFaces(this.V, [f], { h:PAL.h[1], s:100, l0:flick, l1:6, a:a*f.em*0.9, edgeA:0.5, edge:18, both:1 });
+      } else if (f.stroke){
+        gatherFaces(this.V, [f], { h:PAL.h[0], s:70, l0:8, l1:11, a:a, edgeA:0.35, edge:26, both:1 });
+      }
+    }
+  }
+}];
 
-    // schooling for small fish/angel (boids-lite, O(n^2) over small n)
-    if (c.kind==='fish' || c.kind==='angel'){
-      let nx=0,ny=0,nz=0, ax=0,ay=0,az=0, sx=0,sy=0,sz=0, n=0;
-      for (const o of creatures){
-        if (o===c || o.kind!==c.kind) continue;
+/* ===========================================================================
+   DECOR SETS
+   =========================================================================== */
+const DECOR = [
+{ /* ------------------------------------------------------- CRYSTAL SPIRES */
+  name:'CRYSTAL SPIRES',
+  desc:'jagged octahedral crystal clusters — refracted light pulses through them in sequence',
+  init(){
+    this.oct = octa();
+    this.spires = [];
+    const sites = [[-9,-7],[8,-9],[3,10]];
+    for (let s=0;s<3;s++){
+      const [bx,bz]=sites[s], n=3+s%2;
+      for (let k=0;k<n;k++){
+        const big = k===0;
+        this.spires.push({
+          pos:[bx+rnd(-2,2)*(big?0:1), big?0:-0.4, bz+rnd(-2,2)*(big?0:1)],
+          h: big?rnd(5.5,7):rnd(1.6,3.2), w: big?rnd(1.1,1.4):rnd(0.5,0.8),
+          yaw:rnd(TAU), tilt: big?rnd(-0.08,0.08):rnd(-0.45,0.45),
+          ph: s*2.1 + k*0.7
+        });
+      }
+    }
+  },
+  update(){},
+  gather(a){
+    for (const sp of this.spires){
+      const eA = 0.35 + 0.5*(Math.sin(t*1.3 - sp.ph)*0.5+0.5);
+      gatherFaces(
+        transformPts(this.oct.v, [sp.pos[0], sp.pos[1]+sp.h*0.55, sp.pos[2]],
+                     sp.yaw, sp.tilt, 0, [sp.w, sp.h*0.62, sp.w]),
+        this.oct.f,
+        { h:PAL.h[1], s:75, l0:13, l1:22, a:a, edge:34, edgeA:eA*a>0?eA:0 });
+    }
+  }
+},
+{ /* --------------------------------------------------------- VECTOR RUINS */
+  name:'VECTOR RUINS',
+  desc:'a collapsed wireframe temple — columns, broken arch, sunken pyramid, one drifting firefly',
+  init(){
+    this.col  = prism(6, 0.85, 7);
+    this.col2 = prism(6, 0.85, 5.5);
+    this.stub = prism(6, 0.8, 4.6);
+    this.lint = box(5.8, 1.1, 1.6);
+    this.pyr  = { v:[[-2.4,0,-2.4],[2.4,0,-2.4],[2.4,0,2.4],[-2.4,0,2.4],[0,3.4,0]],
+      f:[{i:[0,1,4],both:1},{i:[1,2,4],both:1},{i:[2,3,4],both:1},{i:[3,0,4],both:1}] };
+    this.u = 0;
+  },
+  update(dt){ this.u += dt*0.5; },
+  gather(a){
+    const st = { h:PAL.h[0], s:28, l0:11, l1:18, a:a, edge:30, edgeA:0.5 };
+    // standing columns
+    gatherFaces(transformPts(this.col.v,  [-10,0,-4]), this.col.f, st);
+    gatherFaces(transformPts(this.col2.v, [-12.5,0,2], 0.4), this.col2.f, st);
+    // toppled column lying across the sand
+    gatherFaces(transformPts(this.col2.v, [-6,0.85,3], 0.7, Math.PI/2*0.96), this.col2.f, st);
+    // sunken tilted pyramid
+    gatherFaces(transformPts(this.pyr.v, [10,-1.1,6], 0.7, 0, 0.18), this.pyr.f, st);
+    // broken arch: two stubs + lintel resting askew
+    const ax=7, az=-8;
+    gatherFaces(transformPts(this.stub.v, [ax-2.6,0,az]), this.stub.f, st);
+    gatherFaces(transformPts(this.stub.v, [ax+2.6,0,az], 0.2), this.stub.f, st);
+    gatherFaces(transformPts(this.lint.v, [ax,5.1,az], 0.06, 0, 0.07), this.lint.f, st);
+    // firefly drifting a figure-eight through the arch
+    const u=this.u;
+    point3([ax+Math.sin(u)*3.4, 2.6+Math.sin(2*u)*1.4, az+Math.cos(u)*1.4],
+           0.16, PAL.h[2], 100, 72, 0.9*a);
+  }
+},
+{ /* ---------------------------------------------------------- SIGNAL KELP */
+  name:'SIGNAL KELP',
+  desc:'a row of swaying ribbon antennae, near-black blades traced in neon, hot buds at the tips',
+  init(){
+    this.strands=[];
+    const X=[-11,-6,0,6,11], Z=[5,8,10,8,5];
+    for (let k=0;k<5;k++){
+      const dir=rnd(TAU);
+      this.strands.push({ x:X[k], z:Z[k], h:rnd(8,11.5), ph:rnd(TAU),
+        px:Math.cos(dir), pz:Math.sin(dir) });
+    }
+    this.oct = octa();
+  },
+  update(){},
+  gather(a){
+    for (const s of this.strands){
+      const SEGS=6, segH=s.h/SEGS;
+      let cxp=s.x, czp=s.z, sway=0;
+      const V=[], F=[];
+      for (let g=0; g<=SEGS; g++){
+        const w = lerp(0.95, 0.16, g/SEGS);
+        V.push([cxp - s.px*w, g*segH, czp - s.pz*w], [cxp + s.px*w, g*segH, czp + s.pz*w]);
+        sway += Math.sin(t*1.15 + g*0.55 + s.ph)*0.22;
+        cxp = s.x + sway*0.9; czp = s.z + sway*0.35;
+        if (g<SEGS) F.push({ i:[g*2, g*2+1, g*2+3, g*2+2], both:1 });
+      }
+      gatherFaces(V, F, { h:PAL.h[0], s:80, l0:12, l1:14, a:a, edge:46, edgeA:0.95 });
+      // glowing tip bud
+      const tip=V[V.length-1], tip2=V[V.length-2];
+      const bl = 42 + Math.sin(t*2.2+s.ph)*16;
+      gatherFaces(transformPts(this.oct.v,
+        [(tip[0]+tip2[0])/2, tip[1]+0.35, (tip[2]+tip2[2])/2], 0,0,0,[0.28,0.42,0.28]),
+        this.oct.f, { h:PAL.h[2], s:95, l0:bl, l1:10, a:a, edge:20, edgeA:0.9 });
+    }
+  }
+}];
+
+/* ===========================================================================
+   INHABITANT SETS
+   =========================================================================== */
+// shared chunky fish mesh: nose cone + tail cone + caudal & dorsal fins
+const FISH = (()=>{
+  const v=[[0,0,1.05],[0,.34,.1],[.3,0,.05],[0,-.3,.1],[-.3,0,.05],
+           [0,0,-.95],[0,.5,-1.55],[0,-.45,-1.5],[0,.78,-.45]];
+  const f=[{i:[0,1,2]},{i:[0,2,3]},{i:[0,3,4]},{i:[0,4,1]},
+           {i:[5,2,1]},{i:[5,3,2]},{i:[5,4,3]},{i:[5,1,4]},
+           {i:[5,6,7],both:1},{i:[1,8,5],both:1}];
+  const wig=v.map(p=>clamp((1.05-p[2])/2.6,0,1));
+  return {v,f,wig};
+})();
+function fishVerts(c, time){ // tail shear in model space
+  const out=new Array(FISH.v.length);
+  for (let k=0;k<FISH.v.length;k++){
+    const p=FISH.v[k];
+    out[k]=[p[0]+Math.sin(time*c.wf + c.ph)*c.wa*FISH.wig[k], p[1], p[2]];
+  }
+  return out;
+}
+function headingOf(c, dt){
+  const sp=Math.hypot(c.vel[0],c.vel[1],c.vel[2])||1;
+  const ty=Math.atan2(c.vel[0],c.vel[2]), tp=-Math.asin(clamp(c.vel[1]/sp,-1,1));
+  const prev=c.yaw;
+  const k=1-Math.exp(-6*dt);
+  c.yaw += (mod(ty-c.yaw+Math.PI,TAU)-Math.PI)*k;
+  c.pitch += (mod(tp-c.pitch+Math.PI,TAU)-Math.PI)*k;
+  const turn=(mod(c.yaw-prev+Math.PI,TAU)-Math.PI)/Math.max(dt,1e-4);
+  c.roll = lerp(c.roll, clamp(-turn*0.16,-0.55,0.55), k);
+}
+function boundsForce(p, acc, m=2.5, g=6){
+  if (p[0]> BND.x-m) acc[0]-=g;  if (p[0]<-BND.x+m) acc[0]+=g;
+  if (p[2]> BND.z-m) acc[2]-=g;  if (p[2]<-BND.z+m) acc[2]+=g;
+  if (p[1]> BND.y1-1.5) acc[1]-=g; if (p[1]< BND.y0+1.5) acc[1]+=g;
+}
+
+const LIFE = [
+{ /* ------------------------------------------------------- NEON SCHOOL RUN */
+  name:'SCHOOL + SHARK',
+  desc:'a shimmering boid school threading the tank while one shark rides an endless figure-eight',
+  init(){
+    this.boids=[];
+    for (let i=0;i<26;i++) this.boids.push({
+      pos:[rnd(-10,10), rnd(BND.y0+1,BND.y1-1), rnd(-10,10)],
+      vel:[rnd(-2,2), rnd(-.5,.5), rnd(-2,2)],
+      yaw:0,pitch:0,roll:0, ph:rnd(TAU), wf:rnd(7,10), wa:0.26,
+      size:rnd(0.65,0.95), hj:rnd(-14,14)
+    });
+    this.shark={ yaw:0,pitch:0,roll:0, ph:0, wf:2.6, wa:0.17, pos:[0,6,0], vel:[1,0,0] };
+  },
+  update(dt){
+    const sh=this.shark;
+    // shark: analytic figure-eight, velocity from finite difference
+    const u=t*0.14, e=0.02;
+    const P=u=>[Math.sin(u)*11.5, 6.5+Math.sin(u*0.6)*2.2, Math.sin(2*u)*7.5];
+    const p0=P(u), p1=P(u+e);
+    sh.pos=p0; sh.vel=[(p1[0]-p0[0])/e*0.14,(p1[1]-p0[1])/e*0.14,(p1[2]-p0[2])/e*0.14];
+    headingOf(sh, dt);
+    // boids
+    const B=this.boids;
+    for (const c of B){
+      const acc=[0,0,0];
+      let nx=0,ny=0,nz=0, ax=0,ay=0,az=0, n=0;
+      for (const o of B){
+        if (o===c) continue;
         const dx=o.pos[0]-c.pos[0], dy=o.pos[1]-c.pos[1], dz=o.pos[2]-c.pos[2];
         const d2=dx*dx+dy*dy+dz*dz;
-        if (d2>0 && d2<100){
+        if (d2<36){
           n++; nx+=o.pos[0]; ny+=o.pos[1]; nz+=o.pos[2];
           ax+=o.vel[0]; ay+=o.vel[1]; az+=o.vel[2];
-          const d=Math.sqrt(d2); sx-=dx/d; sy-=dy/d; sz-=dz/d;
+          if (d2<7){ const d=Math.sqrt(d2)||1; acc[0]-=dx/d*6; acc[1]-=dy/d*6; acc[2]-=dz/d*6; }
         }
       }
       if (n>0){
-        acc[0]+=((nx/n-c.pos[0])*0.12 + ax/n*0.6 + sx*4);
-        acc[1]+=((ny/n-c.pos[1])*0.12 + ay/n*0.6 + sy*4);
-        acc[2]+=((nz/n-c.pos[2])*0.12 + az/n*0.6 + sz*4);
+        acc[0]+=(nx/n-c.pos[0])*0.3 + (ax/n-c.vel[0])*0.9;
+        acc[1]+=(ny/n-c.pos[1])*0.3 + (ay/n-c.vel[1])*0.9;
+        acc[2]+=(nz/n-c.pos[2])*0.3 + (az/n-c.vel[2])*0.9;
       }
+      // flee the shark
+      const fx=c.pos[0]-sh.pos[0], fy=c.pos[1]-sh.pos[1], fz=c.pos[2]-sh.pos[2];
+      const fd2=fx*fx+fy*fy+fz*fz;
+      if (fd2<49){ const fd=Math.sqrt(fd2)||1, str=(7-fd)*3.2;
+        acc[0]+=fx/fd*str; acc[1]+=fy/fd*str; acc[2]+=fz/fd*str; }
+      boundsForce(c.pos, acc);
+      c.vel[0]+=acc[0]*dt*2.2; c.vel[1]+=acc[1]*dt*1.4; c.vel[2]+=acc[2]*dt*2.2;
+      const sp=Math.hypot(c.vel[0],c.vel[1],c.vel[2])||1;
+      const mx = fd2<49 ? 8.5 : 4.6;
+      if (sp>mx){ c.vel[0]*=mx/sp; c.vel[1]*=mx/sp; c.vel[2]*=mx/sp; }
+      if (sp<1.4){ c.vel[0]*=1.05; c.vel[2]*=1.05; }
+      c.pos[0]+=c.vel[0]*dt; c.pos[1]+=c.vel[1]*dt; c.pos[2]+=c.vel[2]*dt;
+      headingOf(c, dt);
     }
-    // occasional dart (startle burst, eased)
-    if (c.dart<=0 && Math.random() < 0.0009) c.dart = 0.45;
-  }
-
-  // soft walls: steer back inside the box
-  const m=4;
-  if (c.pos[0]> BOX.x-m) acc[0]-=6; if (c.pos[0]<-BOX.x+m) acc[0]+=6;
-  if (c.pos[1]> BOX.yTop-m) acc[1]-=6; if (c.pos[1]<BOX.yBot+m) acc[1]+=6;
-  if (c.pos[2]> BOX.zFar-m) acc[2]-=6; if (c.pos[2]<BOX.zNear+m) acc[2]+=6;
-
-  // integrate (critically-damped feel)
-  let burst = c.dart>0 ? 3.2 : 1;
-  if (c.dart>0) c.dart-=dt;
-  const k = 2.2;
-  c.vel[0]+= acc[0]*dt*k; c.vel[1]+= acc[1]*dt*k*0.6; c.vel[2]+= acc[2]*dt*k;
-  // clamp speed
-  let sp=Math.hypot(c.vel[0],c.vel[1],c.vel[2])||1;
-  const maxS = c.speed*burst;
-  if (sp>maxS){ const s=maxS/sp; c.vel[0]*=s; c.vel[1]*=s; c.vel[2]*=s; }
-}
-
-function currentField(p, time){
-  const s=0.35;
-  return [
-    Math.cos(time*0.05 + p[1]*0.04)*s,
-    Math.sin(time*0.04 + p[0]*0.03)*s*0.3,
-    Math.sin(time*0.045 + p[0]*0.03)*s,
-  ];
-}
-
-function updateCreature(c, dt){
-  c.age += dt;
-  if (c.fade<1) c.fade = Math.min(1, c.fade + dt/2);
-  steer(c, dt);
-  // move
-  c.pos[0]+=c.vel[0]*dt; c.pos[1]+=c.vel[1]*dt; c.pos[2]+=c.vel[2]*dt;
-  // orientation from velocity (smoothed)
-  const sp=Math.hypot(c.vel[0],c.vel[1],c.vel[2])||1;
-  const tgtYaw = Math.atan2(c.vel[0], c.vel[2]);
-  const tgtPitch = -Math.asin(clamp(c.vel[1]/sp,-1,1)) * (c.kind==='jelly'?0:1);
-  const prevYaw = c.yaw;
-  c.yaw = lerpAngle(c.yaw, tgtYaw, 1-Math.exp(-6*dt));
-  c.pitch = lerpAngle(c.pitch, tgtPitch, 1-Math.exp(-5*dt));
-  // banking roll from turn rate
-  const turn = mod(c.yaw-prevYaw+Math.PI,TAU)-Math.PI;
-  c.roll = lerp(c.roll, clamp(-turn/dt*0.12,-0.6,0.6), 1-Math.exp(-6*dt));
-  if (c.scripted && c.life!==Infinity){
-    if (c.age>c.life) c.fade = -1; // mark for fade-out/remove
-  }
-}
-
-/* ----------------------- per-frame model-space vertex animation ---------- */
-function animVerts(c, time){
-  const m=c.mesh, base=m.verts, out=[];
-  if (c.kind==='jelly'){
-    const p=(Math.sin(m.pulse*1.7)*0.5+0.5);
-    const rx=1+0.22*p, ry=1-0.18*p;
-    for (let k=0;k<base.length;k++){
-      const v=base[k];
-      out.push([ v[0]*rx, k===0? v[1]*(1+0.25*p): v[1]*ry, v[2]*rx ]);
+  },
+  gather(a){
+    for (const c of this.boids){
+      gatherFaces(transformPts(fishVerts(c,t), c.pos, c.yaw, c.pitch, c.roll,
+        [c.size,c.size,c.size]), FISH.f,
+        { h:mod(PAL.h[0]+c.hj,360), s:80, l0:17, l1:34, a:a, edge:30, edgeA:0.85 });
     }
-    // update tentacle world-ish offsets (model space)
-    for (let ti=0;ti<m.tent.length;ti++){
-      const tt=m.tent[ti], bx=tt.base[0]*rx, bz=tt.base[1]*rx;
-      for (let s=0;s<tt.pts.length;s++){
-        const wob=Math.sin(time*2 - s*0.6 - ti*0.5)*0.12*(s+1);
-        tt.pts[s][0]=bx+wob; tt.pts[s][1]=-(s+1)*0.4; tt.pts[s][2]=bz+Math.cos(time*1.7 - s*0.5)*0.1*(s+1);
-      }
-    }
-    return out;
+    const sh=this.shark;
+    gatherFaces(transformPts(fishVerts(sh,t), sh.pos, sh.yaw, sh.pitch, sh.roll,
+      [1.5,1.7,3.1]), FISH.f,
+      { h:PAL.h[1], s:55, l0:13, l1:26, a:a, edge:32, edgeA:0.8 });
   }
-  if (c.kind==='eel'){
-    // traveling serpentine wave along the body rings
-    for (let k=0;k<base.length;k++){
-      const v=base[k], ring=Math.floor(k/4);
-      const wave=Math.sin(time*5 - ring*0.9)*0.55*(ring/m.rings);
-      out.push([ v[0]+wave, v[1], v[2] ]);
-    }
-    return out;
-  }
-  if (c.kind==='manta'){
-    for (let k=0;k<base.length;k++){
-      const v=base[k];
-      const fl=m.flap[k]*Math.sin(time*2.6 + v[0]*0.4)*0.7;
-      out.push([ v[0], v[1]+fl, v[2] ]);
-    }
-    return out;
-  }
-  // generic fish/shark/angel/whale: tail+body wiggle via z-weighted x shear
-  const amp=c.wagAmp;
-  const f=c.wagFreq;
-  for (let k=0;k<base.length;k++){
-    const v=base[k], w=m.wig[k];
-    const dx=Math.sin(time*f + c.wagPhase)*amp*w;
-    out.push([ v[0]+dx, v[1], v[2] ]);
-  }
-  return out;
-}
-
-/* ----------------------------- transform model->world (rot + scale + pos) */
-function modelToWorld(c, mv){
-  const s=c.size;
-  const cy_=Math.cos(c.yaw), sy_=Math.sin(c.yaw);
-  const cp=Math.cos(c.pitch), sp=Math.sin(c.pitch);
-  const cr=Math.cos(c.roll), sr=Math.sin(c.roll);
-  const out=new Array(mv.length);
-  for (let k=0;k<mv.length;k++){
-    let x=mv[k][0]*s, y=mv[k][1]*s, z=mv[k][2]*s;
-    // roll (around z)
-    let x1=x*cr - y*sr, y1=x*sr + y*cr, z1=z;
-    // pitch (around x)
-    let x2=x1, y2=y1*cp - z1*sp, z2=y1*sp + z1*cp;
-    // yaw (around y)
-    let x3=x2*cy_ + z2*sy_, y3=y2, z3=-x2*sy_ + z2*cy_;
-    out[k]=[ x3+c.pos[0], y3+c.pos[1], z3+c.pos[2] ];
-  }
-  return out;
-}
-
-/* =========================================================================
-   RENDER — collect faces from all creatures, depth-sort, draw flat+wire.
-   ========================================================================= */
-const LIGHT = (()=>{ const l=[0.35,0.8,-0.45]; const n=Math.hypot(...l); return l.map(v=>v/n); })();
-let glowOn = true;       // adaptive: disabled if frame time too high
-const faceBuf = [];      // reused each frame
-
-function gatherCreature(c, time){
-  const mv = animVerts(c, time);
-  const wv = modelToWorld(c, mv);
-  const proj = wv.map(project);
-
-  for (const f of c.mesh.faces){
-    const ia=f.i[0], ib=f.i[1], ic=f.i[2];
-    const pa=proj[ia], pb=proj[ib], pc=proj[ic];
-    if (!pa.vis || !pb.vis || !pc.vis) continue;
-    // world normal
-    const a=wv[ia], b=wv[ib], cc=wv[ic];
-    const ux=b[0]-a[0], uy=b[1]-a[1], uz=b[2]-a[2];
-    const vx=cc[0]-a[0], vy=cc[1]-a[1], vz=cc[2]-a[2];
-    let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
-    const nl=Math.hypot(nx,ny,nz)||1; nx/=nl; ny/=nl; nz/=nl;
-    // screen-space winding (for cull + consistent normal toward camera)
-    const area=(pb.x-pa.x)*(pc.y-pa.y)-(pb.y-pa.y)*(pc.x-pa.x);
-    if (!f.both && area<=0) continue;        // backface cull
-    let lum = nx*LIGHT[0]+ny*LIGHT[1]+nz*LIGHT[2];
-    if (f.both) lum=Math.abs(lum);
-    lum = clamp(lum,0,1)*ambient + 0.12;
-    const depth=(pa.z+pb.z+pc.z)/3;
-    const hue=mod(c.hue + hueShift, 360);
-    faceBuf.push({ pa,pb,pc, depth, hue, lum, line:f.line, fin:f.fin,
-                   alpha:c.fade*(c.kind==='whale'?0.5:1), kind:c.kind });
-  }
-  // jelly tentacle line segments
-  if (c.kind==='jelly'){
-    for (const tt of c.mesh.tent){
-      const topW = wv[tt.top];
-      let prev = project(topW);
-      const segWorld = modelToWorld(c, tt.pts);
-      for (let s=0;s<segWorld.length;s++){
-        const pp=project(segWorld[s]);
-        if (prev.vis && pp.vis){
-          faceBuf.push({ seg:true, ax:prev.x, ay:prev.y, bx:pp.x, by:pp.y,
-            depth:(prev.z+pp.z)/2, hue:mod(c.hue+hueShift,360), alpha:c.fade*0.7 });
-        }
-        prev=pp;
-      }
-    }
-  }
-}
-
-function drawFaces(){
-  faceBuf.sort((a,b)=>b.depth-a.depth);   // far first (painter)
-  ctx.lineJoin='round';
-  for (const f of faceBuf){
-    if (f.seg){
-      ctx.strokeStyle=`hsla(${f.hue},100%,70%,${f.alpha})`;
-      ctx.lineWidth=1.4;
-      if (glowOn){ ctx.shadowColor=`hsl(${f.hue},100%,60%)`; ctx.shadowBlur=6; }
-      ctx.beginPath(); ctx.moveTo(f.ax,f.ay); ctx.lineTo(f.bx,f.by); ctx.stroke();
-      ctx.shadowBlur=0;
-      continue;
-    }
-    const {pa,pb,pc,hue,lum,alpha}=f;
-    ctx.beginPath();
-    ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.lineTo(pc.x,pc.y); ctx.closePath();
-    if (!f.line){
-      // translucent neon fill, brightness from flat shading
-      const L=Math.round(18+lum*40);
-      ctx.fillStyle=`hsla(${hue},85%,${L}%,${0.34*alpha})`;
-      ctx.fill();
-    }
-    // Tron wireframe edge
-    ctx.strokeStyle=`hsla(${hue},100%,${Math.round(58+lum*18)}%,${alpha})`;
-    ctx.lineWidth=1.3;
-    if (glowOn){ ctx.shadowColor=`hsl(${hue},100%,62%)`; ctx.shadowBlur=7; }
-    ctx.stroke();
-    ctx.shadowBlur=0;
-  }
-}
-
-/* =========================================================================
-   ENVIRONMENT — sky, banded sun, perspective grid, light shafts, particles.
-   ========================================================================= */
-function drawSky(){
-  const sk=skyAt(dayPhase);
-  const g=ctx.createLinearGradient(0,0,0,H);
-  g.addColorStop(0, sk.top);
-  g.addColorStop(0.45, sk.mid);
-  g.addColorStop(0.72, lerpColor(sk.mid, sk.deep, 0.6));
-  g.addColorStop(1, sk.deep);
-  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-}
-
-function drawSun(){
-  // banded neon sun near the surface; gently breathes vertically.
-  const horizon = cy_screen();
-  const R = Math.min(W,H)*0.17;
-  const sxp = cx + Math.sin(t*0.05)*W*0.04;
-  const syp = horizon - R*0.15 + Math.sin(t*0.12)*8;
-  ctx.save();
-  ctx.beginPath(); ctx.arc(sxp,syp,R,0,TAU); ctx.clip();
-  const g=ctx.createLinearGradient(0,syp-R,0,syp+R);
-  g.addColorStop(0, pal.sun1); g.addColorStop(1, pal.sun2);
-  ctx.fillStyle=g; ctx.fillRect(sxp-R,syp-R,R*2,R*2);
-  // carve horizontal bands (gaps widen downward)
-  const sk=skyAt(dayPhase);
-  ctx.fillStyle=sk.mid;
-  let y=syp-R*0.1, gap=3;
-  while (y<syp+R){ ctx.fillRect(sxp-R, y, R*2, gap*0.7); y+=gap; gap+=1.1; }
-  ctx.restore();
-  // soft halo
-  if (glowOn){
-    const h=ctx.createRadialGradient(sxp,syp,R*0.4, sxp,syp,R*2.1);
-    h.addColorStop(0, pal.sun1+'55'); h.addColorStop(1, '#00000000');
-    ctx.fillStyle=h; ctx.fillRect(sxp-R*2.1,syp-R*2.1,R*4.2,R*4.2);
-  }
-}
-function cy_screen(){ // approximate horizon: project a far floor point
-  const p=project([0,FLOOR_Y, BOX.zFar+40]); return p.vis? p.y : H*0.42;
-}
-
-function drawGrid(){
-  const scroll = mod(t*3.2, 4);     // flow toward viewer
-  ctx.lineWidth=1; ctx.lineJoin='round';
-  const ghue = mod(pal.grid+hueShift,360);
-  // lines parallel to X (vary z) — draw as projected polylines
-  for (let zi=-1; zi<46; zi++){
-    const z = BOX.zNear + zi*4 + scroll;
-    if (z<BOX.zNear-2 || z>BOX.zFar+44) continue;
-    let started=false;
-    ctx.beginPath();
-    for (let xi=-BOX.x; xi<=BOX.x+0.1; xi+=BOX.x){ // just need endpoints, plane is flat
-      const p=project([xi, FLOOR_Y, z]);
-      if (!p.vis){ started=false; continue; }
-      if (!started){ ctx.moveTo(p.x,p.y); started=true; } else ctx.lineTo(p.x,p.y);
-    }
-    const fade=clamp(1-(z-BOX.zNear)/(BOX.zFar+44-BOX.zNear),0.05,1);
-    const bright = zi%4===0;
-    ctx.strokeStyle=`hsla(${bright?mod(ghue+18,360):ghue},100%,${bright?70:55}%,${0.5*fade})`;
-    if (glowOn && bright){ ctx.shadowColor=`hsl(${ghue},100%,60%)`; ctx.shadowBlur=6; }
-    ctx.stroke(); ctx.shadowBlur=0;
-  }
-  // lines parallel to Z (vary x)
-  for (let xi=-BOX.x; xi<=BOX.x+0.1; xi+=4){
-    let started=false; ctx.beginPath();
-    for (let z=BOX.zNear; z<=BOX.zFar+44; z+=6){
-      const p=project([xi, FLOOR_Y, z]);
-      if (!p.vis){ started=false; continue; }
-      if (!started){ ctx.moveTo(p.x,p.y); started=true; } else ctx.lineTo(p.x,p.y);
-    }
-    ctx.strokeStyle=`hsla(${ghue},100%,55%,0.22)`;
-    ctx.stroke();
-  }
-}
-
-function drawLightShafts(){
-  // caustic god-rays from the surface (additive, swaying).
-  ctx.save(); ctx.globalCompositeOperation='lighter';
-  const horizon=cy_screen();
-  for (let i=0;i<6;i++){
-    const baseX = cx + (i-2.5)*W*0.13 + Math.sin(t*0.2+i)*30;
-    const w = 60 + Math.sin(t*0.5+i*1.3)*30;
-    const op = 0.05 + 0.04*(Math.sin(t*0.7+i)*0.5+0.5);
-    const g=ctx.createLinearGradient(baseX, horizon-40, baseX, H);
-    const hue=mod(pal.accents[1]+hueShift,360);
-    g.addColorStop(0, `hsla(${hue},100%,75%,${op})`);
-    g.addColorStop(1, `hsla(${hue},100%,60%,0)`);
-    ctx.fillStyle=g;
-    ctx.beginPath();
-    ctx.moveTo(baseX-w*0.3, horizon-40);
-    ctx.lineTo(baseX+w*0.3, horizon-40);
-    ctx.lineTo(baseX+w*1.6, H);
-    ctx.lineTo(baseX-w*1.6, H);
-    ctx.closePath(); ctx.fill();
-  }
-  ctx.restore();
-}
-
-/* ----------------------------------------- bubbles + plankton (3D points) */
-const bubbles=[], plankton=[];
-const VENTS=[ [-26,FLOOR_Y,30], [10,FLOOR_Y,42], [30,FLOOR_Y,22], [-6,FLOOR_Y,16] ];
-function initParticles(){
-  for (let i=0;i<70;i++) plankton.push({
-    p:[rnd(-BOX.x,BOX.x), rnd(BOX.yBot,BOX.yTop), rnd(BOX.zNear,BOX.zFar)],
-    seed:rnd(TAU), spd:rnd(0.3,0.9)
-  });
-}
-function emitBubbles(dt){
-  for (const v of VENTS){
-    if (Math.random()<dt*3){
-      bubbles.push({ p:[v[0]+rnd(-1,1), v[1], v[2]+rnd(-1,1)], r:rnd(0.08,0.22), seed:rnd(TAU), spd:rnd(2.5,4.5) });
-    }
-  }
-  for (let i=bubbles.length-1;i>=0;i--){
-    const b=bubbles[i];
-    b.p[1]+=b.spd*dt; b.p[0]+=Math.sin(t*1.5+b.seed)*0.6*dt; b.r+=dt*0.04;
-    if (b.p[1]>BOX.yTop-1) bubbles.splice(i,1);
-  }
-}
-function drawParticles(){
-  ctx.save(); ctx.globalCompositeOperation='lighter';
-  // plankton twinkle
-  for (const k of plankton){
-    k.p[1]+=k.spd*0.15*dt; k.p[0]+=Math.sin(t+k.seed)*0.15*dt;
-    if (k.p[1]>BOX.yTop) k.p[1]=BOX.yBot;
-    const pr=project(k.p); if(!pr.vis) continue;
-    const a=0.25+0.4*(Math.sin(t*3+k.seed)*0.5+0.5);
-    const hue=mod(pal.accents[1]+hueShift,360);
-    ctx.fillStyle=`hsla(${hue},100%,80%,${a*clamp(pr.inv*2,0.1,1)})`;
-    const s=clamp(pr.inv*1.6,0.6,2.4);
-    ctx.fillRect(pr.x,pr.y,s,s);
-  }
-  // bubbles
-  const bhue=mod(pal.accents[1]+hueShift,360);
-  for (const b of bubbles){
-    const pr=project(b.p); if(!pr.vis) continue;
-    const rr=Math.max(1,b.r*pr.inv);
-    ctx.strokeStyle=`hsla(${bhue},100%,82%,0.5)`; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.arc(pr.x,pr.y,rr,0,TAU); ctx.stroke();
-  }
-  ctx.restore();
-}
-
-/* -------------------------------------------------- seaweed (low-poly 2D) */
-const weeds=[];
-function initWeeds(){
-  for (let i=0;i<14;i++){
-    weeds.push({ x:rnd(-BOX.x+4,BOX.x-4), z:rnd(BOX.zNear+6,BOX.zFar-6),
-      h:rnd(5,11), seed:rnd(TAU), hue: pal.accents[(Math.random()*pal.accents.length)|0] });
-  }
-}
-function drawWeeds(){
-  // sort far->near so they layer with depth
-  const list = weeds.map(w=>({w, pz:project([w.x,FLOOR_Y,w.z])})).filter(o=>o.pz.vis);
-  list.sort((a,b)=>b.pz.z-a.pz.z);
-  for (const {w,pz} of list){
-    const segs=5; let px=pz.x, py=pz.y;
-    const hue=mod(w.hue+hueShift,360);
-    ctx.lineWidth=Math.max(1, pz.inv*0.5);
-    for (let s=0;s<segs;s++){
-      const sway=Math.sin(t*1.2 + s*0.6 + w.seed)*(s+1)*0.5;
-      const top=project([w.x+sway, FLOOR_Y + (s+1)*(w.h/segs), w.z]);
-      if (!top.vis) break;
-      ctx.strokeStyle=`hsla(${hue},100%,${55+s*4}%,${0.5})`;
-      if (glowOn){ ctx.shadowColor=`hsl(${hue},100%,55%)`; ctx.shadowBlur=5; }
-      ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(top.x,top.y); ctx.stroke();
-      ctx.shadowBlur=0;
-      px=top.x; py=top.y;
-    }
-  }
-}
-
-/* =========================================================================
-   EVENTS — whale flyby, shooting comet, affirmations (rare rewards).
-   ========================================================================= */
-let whaleActive=false, nextWhaleAt=70;
-function maybeWhale(){
-  if (!whaleActive && t>nextWhaleAt){
-    const dir = Math.random()<0.5?1:-1;
-    const w=spawnCreature('whale', {
-      pos:[ -dir*(BOX.x+18), rnd(-4,6), BOX.zFar-4 ],
-      vel:[ dir*3.2, 0, 0 ], speed:3.2, scripted:true, life:Infinity,
-      hue: pal.accents[2], size:1
+},
+{ /* ---------------------------------------------------------- VOID MANTAS */
+  name:'MANTAS + JELLIES',
+  desc:'three mantas glide layered orbits while jellyfish pulse slowly up through the dark',
+  init(){
+    this.mantas=[];
+    for (let k=0;k<3;k++) this.mantas.push({
+      r:[8.5,11,13][k], h:[5.5,8,10.5][k], w:[0.13,-0.10,0.085][k],
+      ph:rnd(TAU), fp:rnd(TAU), yaw:0,pitch:0,roll:0, pos:[0,0,0], vel:[1,0,0]
     });
-    w.whaleDir=dir;
-    whaleActive=true;
-    nextWhaleAt = t + rnd(150,260);
+    this.jellies=[];
+    for (let k=0;k<6;k++) this.jellies.push({
+      pos:[rnd(-11,11), rnd(BND.y0,BND.y1), rnd(-11,11)],
+      ph:rnd(TAU), drift:rnd(TAU), s:rnd(0.8,1.3)
+    });
+    // manta sheet: head, hump, tailroot, Ltip, Rtip, Lmid, Rmid, tailspike
+    this.MV=[[0,.15,1.3],[0,.32,-.15],[0,0,-1.25],[-2.3,.1,-.35],[2.3,.1,-.35],
+             [-1.05,.05,.55],[1.05,.05,.55],[0,-.05,-2.6]];
+    this.MF=[{i:[0,5,1],both:1},{i:[5,3,1],both:1},{i:[1,3,2],both:1},
+             {i:[0,1,6],both:1},{i:[6,1,4],both:1},{i:[1,2,4],both:1}];
+    this.ring=[]; for (let k=0;k<6;k++){ const a0=k/6*TAU; this.ring.push([Math.cos(a0),Math.sin(a0)]); }
+  },
+  update(dt){
+    for (const m of this.mantas){
+      const u=t*m.w+m.ph, e=0.03;
+      const P=u=>[Math.cos(u)*m.r, m.h+Math.sin(u*1.7)*1.1, Math.sin(u)*m.r*0.78];
+      const p0=P(u), p1=P(u+e);
+      m.pos=p0; m.vel=[(p1[0]-p0[0])/e*m.w,(p1[1]-p0[1])/e*m.w,(p1[2]-p0[2])/e*m.w];
+      headingOf(m, dt);
+      m.roll = clamp(m.roll + (m.w>0?-0.18:0.18) - m.roll*0.5, -0.5, 0.5);
+    }
+    for (const j of this.jellies){
+      j.ph += dt;
+      const p=Math.sin(j.ph*1.6)*0.5+0.5;
+      j.pos[1] += (0.35 + p*0.9)*dt;
+      j.pos[0] += Math.cos(t*0.3+j.drift)*0.25*dt;
+      j.pos[2] += Math.sin(t*0.27+j.drift)*0.25*dt;
+      if (j.pos[1] > BND.y1+1){ j.pos[1]=BND.y0-0.5; j.pos[0]=rnd(-11,11); j.pos[2]=rnd(-11,11); }
+    }
+  },
+  gather(a){
+    for (const m of this.mantas){
+      const mv=this.MV.map(p=>{
+        const w=Math.pow(Math.abs(p[0])/2.3,1.35);
+        return [p[0], p[1]+Math.sin(t*2.1+m.fp+Math.abs(p[0])*0.4)*w*0.85, p[2]];
+      });
+      const wv=transformPts(mv, m.pos, m.yaw, m.pitch, m.roll, [1.9,1.9,1.9]);
+      gatherFaces(wv, this.MF, { h:PAL.h[0], s:70, l0:14, l1:30, a:a, edge:34, edgeA:0.85 });
+      line3(wv[2], wv[7], PAL.h[0], 80, 60, 0.7*a);   // tail spike
+    }
+    for (const j of this.jellies){
+      const p=Math.sin(j.ph*1.6)*0.5+0.5;
+      const br = j.s*0.85*(1+0.28*p), bh = j.s*0.9*(1-0.22*p);
+      const V=[[j.pos[0], j.pos[1]+bh, j.pos[2]]];
+      for (const r of this.ring) V.push([j.pos[0]+r[0]*br, j.pos[1], j.pos[2]+r[1]*br]);
+      const F=[]; for (let k=0;k<6;k++) F.push({i:[0,1+k,1+(k+1)%6],both:1});
+      gatherFaces(V, F, { h:PAL.h[1], s:85, l0:24, l1:22, a:a*0.75, edge:30, edgeA:0.9 });
+      for (let k=0;k<3;k++){ // trailing tentacles
+        const r=this.ring[k*2];
+        let px=j.pos[0]+r[0]*br*0.6, py=j.pos[1], pz=j.pos[2]+r[1]*br*0.6;
+        for (let s2=1;s2<=4;s2++){
+          const nx2=j.pos[0]+r[0]*br*0.6+Math.sin(t*1.8-s2*0.7+j.ph)*0.16*s2;
+          const ny2=j.pos[1]-s2*j.s*0.5, nz2=j.pos[2]+r[1]*br*0.6+Math.cos(t*1.5-s2*0.6+j.ph)*0.12*s2;
+          line3([px,py,pz],[nx2,ny2,nz2], PAL.h[1], 85, 55, 0.45*a);
+          px=nx2; py=ny2; pz=nz2;
+        }
+      }
+    }
+  }
+},
+{ /* ------------------------------------------------------- SERPENT GARDEN */
+  name:'SERPENTS',
+  desc:'luminous tube-eels weave endless knots, a light pulse crawling down each body',
+  init(){
+    this.eels=[];
+    const N=16, SEG=0.8;
+    for (let k=0;k<4;k++){
+      const head=[rnd(-9,9), lerp(BND.y0+1.5, BND.y1-1.5, k/3), rnd(-9,9)];
+      const pts=[]; for (let i=0;i<N;i++) pts.push([head[0], head[1], head[2]-i*SEG]);
+      this.eels.push({ pts, N, SEG, vel:[rnd(-2,2),0,rnd(-2,2)], wander:rnd(TAU),
+        hue:k, ph:rnd(TAU), spd:rnd(3.6,4.6) });
+    }
+  },
+  update(dt){
+    for (const e of this.eels){
+      // head: wander steering
+      e.wander += rnd(-0.6,0.6)*dt*3;
+      const acc=[Math.cos(e.wander)*3, Math.sin(e.wander*0.8)*1.1, Math.sin(e.wander)*3];
+      boundsForce(e.pts[0], acc, 3.5, 9);
+      e.vel[0]+=acc[0]*dt*2; e.vel[1]+=acc[1]*dt*1.3; e.vel[2]+=acc[2]*dt*2;
+      const sp=Math.hypot(e.vel[0],e.vel[1],e.vel[2])||1;
+      if (sp>e.spd){ e.vel[0]*=e.spd/sp; e.vel[1]*=e.spd/sp; e.vel[2]*=e.spd/sp; }
+      e.pts[0][0]+=e.vel[0]*dt; e.pts[0][1]+=e.vel[1]*dt; e.pts[0][2]+=e.vel[2]*dt;
+      // body: fixed-length chain follow
+      for (let i=1;i<e.N;i++){
+        const P=e.pts[i], Q=e.pts[i-1];
+        const dx=Q[0]-P[0], dy=Q[1]-P[1], dz=Q[2]-P[2];
+        const d=Math.hypot(dx,dy,dz)||1, k=(d-e.SEG)/d;
+        P[0]+=dx*k; P[1]+=dy*k; P[2]+=dz*k;
+      }
+    }
+  },
+  gather(a){
+    for (const e of this.eels){
+      const N=e.N, V=[], F=[];
+      // rings perpendicular to the local path direction
+      for (let i=0;i<N;i++){
+        const A=e.pts[Math.max(i-1,0)], B=e.pts[Math.min(i+1,N-1)];
+        let d=norm3([A[0]-B[0],A[1]-B[1],A[2]-B[2]]);
+        let u=cross3(d,[0,1,0]);
+        if (Math.hypot(u[0],u[1],u[2])<0.1) u=[1,0,0];
+        u=norm3(u);
+        const v=cross3(u,d);
+        const r=lerp(0.36,0.07,i/(N-1));
+        const C=e.pts[i];
+        V.push([C[0]+u[0]*r,C[1]+u[1]*r,C[2]+u[2]*r],[C[0]+v[0]*r,C[1]+v[1]*r,C[2]+v[2]*r],
+               [C[0]-u[0]*r,C[1]-u[1]*r,C[2]-u[2]*r],[C[0]-v[0]*r,C[1]-v[1]*r,C[2]-v[2]*r]);
+      }
+      for (let i=0;i<N-1;i++) for (let k=0;k<4;k++){
+        const k2=(k+1)%4;
+        F.push({ i:[i*4+k, i*4+k2, (i+1)*4+k2, (i+1)*4+k], both:1, seg:i });
+      }
+      // nose + tail caps
+      const hi=V.length, A0=e.pts[0], A1=e.pts[1];
+      const nd=norm3([A0[0]-A1[0],A0[1]-A1[1],A0[2]-A1[2]]);
+      V.push([A0[0]+nd[0]*0.7, A0[1]+nd[1]*0.7, A0[2]+nd[2]*0.7]);
+      for (let k=0;k<4;k++) F.push({ i:[hi, k, (k+1)%4], both:1, seg:0 });
+      const hue = mod(PAL.h[e.hue%3] + (e.hue>=3?25:0), 360);
+      gatherFaces(V, F, {
+        h:hue, s:85, a:a, l1:16, edge:32, edgeA:0.85,
+        lOf:(f)=> 14 + Math.max(0, Math.sin(t*3.4 - f.seg*0.75 + e.ph))*26
+      });
+    }
+  }
+}];
+
+/* ===========================================================================
+   LAYER MANAGER + UI
+   =========================================================================== */
+const layers = {
+  tank:  { list:TANKS, cur:0, alpha:1, pending:-1 },
+  decor: { list:DECOR, cur:0, alpha:1, pending:-1 },
+  life:  { list:LIFE,  cur:0, alpha:1, pending:-1 },
+};
+for (const k in layers) layers[k].list[0].init();
+
+function select(cat, i){
+  const L=layers[cat];
+  if (i===L.cur && L.pending<0) return;
+  L.pending = i;
+  refreshUI();
+}
+function updateLayers(dt){
+  for (const k in layers){
+    const L=layers[k];
+    if (L.pending>=0){
+      L.alpha -= dt*3.2;
+      if (L.alpha<=0){ L.alpha=0; L.cur=L.pending; L.pending=-1; L.list[L.cur].init(); refreshUI(); }
+    } else if (L.alpha<1) L.alpha = Math.min(1, L.alpha+dt*2.6);
   }
 }
 
-const comets=[];
-let nextCometAt=40;
-function maybeComet(){
-  if (t>nextCometAt){
-    comets.push({ x:rnd(W*0.1,W*0.7), y:rnd(H*0.05,H*0.25), vx:rnd(180,300)*(Math.random()<0.5?1:-1), vy:rnd(60,120), life:1.4, t:0 });
-    nextCometAt = t + rnd(70,160);
+const $=id=>document.getElementById(id);
+const BTN={ tank:[$('bt0'),$('bt1'),$('bt2')], decor:[$('bd0'),$('bd1'),$('bd2')], life:[$('bl0'),$('bl1'),$('bl2')] };
+const DSC={ tank:$('dt'), decor:$('dd'), life:$('dl') };
+function refreshUI(){
+  for (const cat in BTN){
+    const L=layers[cat], act = L.pending>=0 ? L.pending : L.cur;
+    L.list.forEach((m,i)=>{
+      const b=BTN[cat][i];
+      b.textContent=m.name;
+      b.className = i===act ? 'on' : '';
+    });
+    DSC[cat].textContent = L.list[act].desc;
   }
-  for (let i=comets.length-1;i>=0;i--){
-    const c=comets[i]; c.t+=dt; c.x+=c.vx*dt; c.y+=c.vy*dt;
-    if (c.t>c.life) comets.splice(i,1);
-  }
 }
-function drawComets(){
-  ctx.save(); ctx.globalCompositeOperation='lighter';
-  for (const c of comets){
-    const a=clamp(1-c.t/c.life,0,1);
-    const tx=c.x-c.vx*0.12, ty=c.y-c.vy*0.12;
-    const g=ctx.createLinearGradient(tx,ty,c.x,c.y);
-    g.addColorStop(0,'#ffffff00'); g.addColorStop(1,`rgba(255,240,255,${a})`);
-    ctx.strokeStyle=g; ctx.lineWidth=2.2;
-    ctx.shadowColor='#fff'; ctx.shadowBlur=glowOn?10:0;
-    ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(c.x,c.y); ctx.stroke();
-    ctx.shadowBlur=0;
-  }
-  ctx.restore();
-}
+for (const cat in BTN) BTN[cat].forEach((b,i)=> b.addEventListener('click', ()=>select(cat,i)));
+refreshUI();
 
-// gentle affirmations fade in occasionally
-const LINES=['just breathe','you are doing fine','let it drift','stay a while','the tide is patient','you belong here','soften','one slow breath','nothing to fix right now','watch the light move'];
-let aff={ text:'', a:0, phase:'wait', timer:14, i:0 };
-function updateAff(dt){
-  aff.timer-=dt;
-  if (aff.phase==='wait' && aff.timer<=0){ aff.phase='in'; aff.text=LINES[aff.i%LINES.length]; aff.i++; }
-  if (aff.phase==='in'){ aff.a=Math.min(1,aff.a+dt/2.5); if(aff.a>=1){aff.phase='hold'; aff.timer=6;} }
-  else if (aff.phase==='hold'){ if(aff.timer<=0) aff.phase='out'; }
-  else if (aff.phase==='out'){ aff.a=Math.max(0,aff.a-dt/2.5); if(aff.a<=0){aff.phase='wait'; aff.timer=rnd(55,95);} }
+let uiHidden=false, idleTimer=null;
+function poke(){
+  if (uiHidden) return;
+  document.body.classList.remove('idle');
+  clearTimeout(idleTimer);
+  idleTimer=setTimeout(()=>document.body.classList.add('idle'), 5000);
 }
-function drawAff(){
-  if (aff.a<=0) return;
-  ctx.save();
-  ctx.globalAlpha=aff.a*0.7;
-  ctx.font=`300 ${Math.round(clamp(W*0.03,16,34))}px 'Courier New', monospace`;
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  const hue=mod(pal.accents[0]+hueShift,360);
-  ctx.fillStyle=`hsl(${hue},90%,80%)`;
-  if (glowOn){ ctx.shadowColor=`hsl(${hue},100%,65%)`; ctx.shadowBlur=14; }
-  ctx.fillText(aff.text.toUpperCase(), cx, H*0.32);
-  ctx.restore();
-}
-
-/* ------------------------------------------------- vignette + CRT overlay */
-let scanPattern=null;
-function buildScan(){
-  const p=document.createElement('canvas'); p.width=1; p.height=3;
-  const pc=p.getContext('2d');
-  pc.fillStyle='rgba(0,0,0,0.16)'; pc.fillRect(0,2,1,1);
-  scanPattern=ctx.createPattern(p,'repeat');
-}
-function drawOverlay(){
-  // vignette
-  const g=ctx.createRadialGradient(cx,H*0.45,Math.min(W,H)*0.25, cx,H*0.5,Math.max(W,H)*0.75);
-  g.addColorStop(0,'#00000000'); g.addColorStop(1,'rgba(5,0,18,0.75)');
-  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-  // scanlines
-  ctx.fillStyle=scanPattern; ctx.fillRect(0,0,W,H);
-  // rolling bright band
-  const by=mod(t*60,H+80)-40;
-  const rg=ctx.createLinearGradient(0,by-20,0,by+20);
-  rg.addColorStop(0,'#ffffff00'); rg.addColorStop(0.5,'rgba(255,255,255,0.035)'); rg.addColorStop(1,'#ffffff00');
-  ctx.fillStyle=rg; ctx.fillRect(0,by-20,W,40);
-}
-
-/* =========================================================================
-   AMBIENT AUDIO (opt-in, muted by default) — detuned drone + soft bells.
-   ========================================================================= */
-let audio=null, audioOn=false;
-const sndBtn=document.getElementById('snd');
-function initAudio(){
-  const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return null;
-  const ac=new AC();
-  const master=ac.createGain(); master.gain.value=0.0; master.connect(ac.destination);
-  const lp=ac.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=600; lp.Q.value=4; lp.connect(master);
-  // drone: 3 detuned oscillators
-  const freqs=[55,55.4,82.5];
-  const oscs=freqs.map(f=>{ const o=ac.createOscillator(); o.type='sine'; o.frequency.value=f;
-    const g=ac.createGain(); g.gain.value=0.18; o.connect(g); g.connect(lp); o.start(); return o; });
-  // slow LFO sweeps filter cutoff
-  const lfo=ac.createOscillator(); lfo.frequency.value=0.05; const lg=ac.createGain(); lg.gain.value=350;
-  lfo.connect(lg); lg.connect(lp.frequency); lfo.start();
-  return { ac, master, lp, oscs, nextBell:2, scale:[0,3,5,7,10,12,15] };
-}
-function bell(a){
-  const ac=a.ac, root=220;
-  const semi=a.scale[(Math.random()*a.scale.length)|0]+(Math.random()<0.4?12:0);
-  const f=root*Math.pow(2,semi/12);
-  const o=ac.createOscillator(); o.type='triangle'; o.frequency.value=f;
-  const g=ac.createGain(); g.gain.value=0;
-  o.connect(g); g.connect(a.lp);
-  const now=ac.currentTime;
-  g.gain.setValueAtTime(0,now); g.gain.linearRampToValueAtTime(0.12,now+0.02);
-  g.gain.exponentialRampToValueAtTime(0.0001,now+3.5);
-  o.start(now); o.stop(now+3.6);
-}
-function updateAudio(dt){
-  if (!audio||!audioOn) return;
-  audio.nextBell-=dt;
-  if (audio.nextBell<=0){ bell(audio); audio.nextBell=rnd(4,9); }
-}
-sndBtn.addEventListener('click', ()=>{
-  if (!audio){ audio=initAudio(); }
-  if (!audio){ sndBtn.textContent='♪ sound: n/a'; return; }
-  audioOn=!audioOn;
-  if (audio.ac.state==='suspended') audio.ac.resume();
-  audio.master.gain.linearRampToValueAtTime(audioOn?0.5:0.0, audio.ac.currentTime+0.6);
-  sndBtn.textContent = audioOn ? '♪ sound: on' : '♪ sound: off';
+['mousemove','touchstart','click'].forEach(e=>window.addEventListener(e,poke));
+poke();
+window.addEventListener('keydown', ev=>{
+  const k=ev.key.toLowerCase();
+  const map={ '1':['tank',0],'2':['tank',1],'3':['tank',2],
+              'q':['decor',0],'w':['decor',1],'e':['decor',2],
+              'a':['life',0],'s':['life',1],'d':['life',2] };
+  if (map[k]) select(map[k][0], map[k][1]);
+  else if (k==='h'){ uiHidden=!uiHidden; document.body.classList.toggle('idle', uiHidden); }
+  if (!uiHidden) poke();
 });
 
-/* ----------------------------------------------------- idle UI auto-hide */
-let idleTimer=null;
-function poke(){
-  document.body.classList.remove('idle');
-  document.body.style.cursor='default';
-  clearTimeout(idleTimer);
-  idleTimer=setTimeout(()=>{ document.body.classList.add('idle'); document.body.style.cursor='none'; }, 2600);
-}
-['mousemove','keydown','touchstart','click'].forEach(e=>window.addEventListener(e,poke));
-poke();
-
-/* =========================================================================
+/* ===========================================================================
    MAIN LOOP
-   ========================================================================= */
+   =========================================================================== */
 let t=0, dt=0, last=performance.now();
-let frameAcc=0, frameN=0;       // adaptive quality monitor
-
-seedPopulation();
-initParticles();
-initWeeds();
-buildScan();
-
 function tick(now){
-  dt = Math.min(0.05, (now-last)/1000); last=now; t+=dt;
+  dt=Math.min(0.05,(now-last)/1000); last=now; t+=dt;
 
-  // --- adaptive quality: average frame ms, toggle glow if struggling ---
-  frameAcc+=dt; frameN++;
-  if (frameN>=45){
-    const avg=frameAcc/frameN*1000;
-    if (avg>26 && glowOn) glowOn=false;
-    else if (avg<17 && !glowOn) glowOn=true;
-    frameAcc=0; frameN=0;
-  }
+  const tank = layers.tank.list[layers.tank.cur];
+  const decor= layers.decor.list[layers.decor.cur];
+  const life = layers.life.list[layers.life.cur];
 
-  // --- time-evolving mood ---
-  dayPhase = mod(dayPhase + dt/DAY_LEN, 1);
-  const sk = Math.sin(dayPhase*TAU);
-  ambient = 0.5 + 0.32*(sk*0.5+0.5);
-  hueShift = mod(hueShift + dt*1.6, 360);
-  // palette cross-fade
-  if (t>nextPalAt && palT>=1){
-    palIdx=(palIdx+1)%PALETTES.length; palTarget=PALETTES[palIdx]; palT=0;
-    nextPalAt = t + rnd(120,200);
-  }
-  if (palT<1){
-    palT=Math.min(1,palT+dt/palDur);
-    pal.grid=lerpHue(pal.grid,palTarget.grid,dt/palDur);
-    for (let i=0;i<pal.accents.length;i++) pal.accents[i]=lerpHue(pal.accents[i],palTarget.accents[i],dt/palDur);
-    pal.sun1=lerpColor(pal.sun1,palTarget.sun1,dt/palDur);
-    pal.sun2=lerpColor(pal.sun2,palTarget.sun2,dt/palDur);
-  }
+  updateCamera(t);
+  updatePal(dt, tank);
+  updateLayers(dt);
+  tank.update(dt); decor.update(dt); life.update(dt);
 
-  // --- drifting camera (Lissajous + slow zoom via target) ---
-  cam.pos[0]=Math.sin(t*0.031)*7 + Math.sin(t*0.013)*3;
-  cam.pos[1]=1.5+Math.sin(t*0.022)*2.4;
-  cam.pos[2]=-30+Math.sin(t*0.017)*4;
-  cam.tgt[0]=Math.sin(t*0.02)*5;
-  cam.tgt[1]=Math.sin(t*0.015)*2;
-  cam.tgt[2]=26;
-  buildView();
+  // background
+  ctx.fillStyle=`rgb(${PAL.bg[0]|0},${PAL.bg[1]|0},${PAL.bg[2]|0})`;
+  ctx.fillRect(0,0,W,H);
+  tank.draw2d();
 
-  // --- population breathing ---
-  if (creatures.length < SOFT_CAP && Math.random()<dt*0.25) spawnCreature('fish');
-  if (creatures.length > SOFT_CAP+3 && Math.random()<dt*0.15){
-    const idx=creatures.findIndex(c=>c.kind==='fish');
-    if (idx>=0) creatures[idx].fade=-1;
-  }
+  // 3D pass
+  RL.length=0;
+  tank.gather(layers.tank.alpha);
+  decor.gather(layers.decor.alpha);
+  life.gather(layers.life.alpha);
+  flush();
 
-  // --- events ---
-  maybeWhale(); maybeComet();
-  updateAff(dt); updateAudio(dt);
-  emitBubbles(dt);
-
-  // --- update creatures, cull faded/escaped scripted ones ---
-  for (let i=creatures.length-1;i>=0;i--){
-    const c=creatures[i];
-    updateCreature(c, dt);
-    if (c.fade<0){
-      c.size*=Math.max(0,1-dt*1.5);
-      if (c.size<0.05){ if(c.kind==='whale')whaleActive=false; creatures.splice(i,1); }
-    }
-    if (c.scripted && Math.abs(c.pos[0])>BOX.x+24){ if(c.kind==='whale')whaleActive=false; creatures.splice(i,1); }
-  }
-
-  /* ---------------- DRAW ---------------- */
-  drawSky();
-  drawSun();
-  drawLightShafts();
-  drawGrid();
-  drawWeeds();
-
-  faceBuf.length=0;
-  for (const c of creatures) gatherCreature(c, t);
-  drawFaces();
-
-  drawParticles();
-  drawComets();
-  drawAff();
-  drawOverlay();
+  // vignette
+  ctx.fillStyle=vigGrad; ctx.fillRect(0,0,W,H);
 
   requestAnimationFrame(tick);
 }
