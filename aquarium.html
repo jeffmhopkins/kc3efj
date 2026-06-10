@@ -525,6 +525,13 @@ function boundsForce(p, acc, m=5, g=14){
   if (p[1]> BND.y1-m) acc[1]-=g*(p[1]-(BND.y1-m))/m;
   if (p[1]< BND.y0+m) acc[1]+=g*((BND.y0+m)-p[1])/m;
 }
+// hard tank containment: even mid-panic a creature can't pass the glass —
+// it's clamped to the wall and its outward velocity is damped (slides along).
+function containBox(p, v, M=0.5, bounce=-0.3){
+  if (p[0]> BND.x-M){ p[0]=BND.x-M; if(v[0]>0)v[0]*=bounce; } else if (p[0]<-BND.x+M){ p[0]=-BND.x+M; if(v[0]<0)v[0]*=bounce; }
+  if (p[2]> BND.z-M){ p[2]=BND.z-M; if(v[2]>0)v[2]*=bounce; } else if (p[2]<-BND.z+M){ p[2]=-BND.z+M; if(v[2]<0)v[2]*=bounce; }
+  if (p[1]> BND.y1-M){ p[1]=BND.y1-M; if(v[1]>0)v[1]*=bounce; } else if (p[1]<BND.y0+M){ p[1]=BND.y0+M; if(v[1]<0)v[1]*=bounce; }
+}
 // Reynolds steering: accelerate from current velocity toward a desired
 // direction at cruise speed, clamped to a maximum steering force.
 function steerTo(desire, vel, speed, maxF){
@@ -539,40 +546,81 @@ function steerTo(desire, vel, speed, maxF){
 
 const LIFE = [
 { /* ------------------------------------------------------- NEON SCHOOL RUN */
-  name:'SCHOOL + SHARK',
-  desc:'a shimmering boid school threading the tank while one shark rides an endless figure-eight',
+  name:'TWO SCHOOLS + SHARK',
+  desc:'two coloured shoals flock by their own rules while a shark patrols, then breaks into an aggressive hunt',
   init(){
+    // two independent schools (own goal + colour), each true Reynolds boids
+    this.schools=[
+      { hueIdx:0, goal:[0,8,0],  gs:[0.062,0.05,0.083], gp:0 },
+      { hueIdx:2, goal:[0,8,0],  gs:[0.051,0.043,0.07], gp:Math.PI },
+    ];
     this.boids=[];
-    for (let i=0;i<70;i++){
-      const v=[rnd(-1,1),rnd(-.3,.3),rnd(-1,1)];
-      this.boids.push({
-        pos:[rnd(-9,9), rnd(BND.y0+1.5,BND.y1-1.5), rnd(-9,9)],
-        vel:v, yaw:0,pitch:0,roll:0, ph:rnd(TAU), wf:rnd(8,11), wa:0.3,
-        size:rnd(0.34,0.5), hj:rnd(-16,16), ms:rnd(4.6,5.8)   // cruise speed
-      });
+    const make=(sch,n)=>{ for(let i=0;i<n;i++) this.boids.push({
+      school:sch,
+      pos:[rnd(-9,9), rnd(BND.y0+1.5,BND.y1-1.5), rnd(-9,9)],
+      vel:[rnd(-1,1),rnd(-.3,.3),rnd(-1,1)],
+      yaw:0,pitch:0,roll:0, ph:rnd(TAU), wf:rnd(8,11), wa:0.3,
+      size:rnd(0.32,0.46), hj:rnd(-12,12), ms:rnd(3.0,3.9)   // slower cruise
+    }); };
+    make(0,40); make(1,34);
+    // shark with a patrol/hunt state machine
+    this.shark={ pos:[0,6,0], vel:[1,0,0], yaw:0,pitch:0,roll:0, ph:0, wf:2.6, wa:0.17,
+      u:0, state:'patrol', timer:rnd(7,12), target:null, lunge:0 };
+  },
+  nearestBoid(p){
+    let best=null, bd=1e9;
+    for (const o of this.boids){
+      const d=(o.pos[0]-p[0])**2+(o.pos[1]-p[1])**2+(o.pos[2]-p[2])**2;
+      if (d<bd){ bd=d; best=o; }
     }
-    this.shark={ yaw:0,pitch:0,roll:0, ph:0, wf:2.6, wa:0.17, pos:[0,6,0], vel:[1,0,0] };
-    this.goal=[0,8,0];
+    return best;
   },
   update(dt){
-    const sh=this.shark;
-    // shark: analytic figure-eight, velocity from finite difference
-    const u=t*0.14, e=0.02;
     const P=u=>[Math.sin(u)*11.5, 6.5+Math.sin(u*0.6)*2.2, Math.sin(2*u)*7.5];
-    const p0=P(u), p1=P(u+e);
-    sh.pos=p0; sh.vel=[(p1[0]-p0[0])/e*0.14,(p1[1]-p0[1])/e*0.14,(p1[2]-p0[2])/e*0.14];
+    const sh=this.shark;
+
+    // -- shark state machine: long calm patrol, occasional aggressive hunt --
+    sh.timer-=dt;
+    const sacc=[0,0,0];
+    let shTopSpeed, shMF;
+    if (sh.state==='patrol'){
+      sh.u += dt*0.14;
+      const tp=P(sh.u+0.35);                                   // chase a point ahead on the path
+      const st=steerTo([tp[0]-sh.pos[0],tp[1]-sh.pos[1],tp[2]-sh.pos[2]], sh.vel, 6, 11);
+      sacc[0]+=st[0]; sacc[1]+=st[1]; sacc[2]+=st[2];
+      shTopSpeed=6.4; shMF=11; sh.wf=2.6;
+      if (sh.timer<=0){ sh.state='hunt'; sh.timer=rnd(4.5,6.5); sh.target=this.nearestBoid(sh.pos); }
+    } else { // HUNT — lock a fish and run it down
+      if (!sh.target) sh.target=this.nearestBoid(sh.pos);
+      const tg=sh.target.pos;
+      const st=steerTo([tg[0]-sh.pos[0],tg[1]-sh.pos[1],tg[2]-sh.pos[2]], sh.vel, 13, 22);
+      sacc[0]+=st[0]*1.6; sacc[1]+=st[1]*1.6; sacc[2]+=st[2]*1.6;
+      shTopSpeed=13; shMF=22; sh.wf=6.5;                        // tail thrashes fast
+      const cd=(tg[0]-sh.pos[0])**2+(tg[1]-sh.pos[1])**2+(tg[2]-sh.pos[2])**2;
+      if (cd<1.6) sh.target=this.nearestBoid(sh.pos);          // "snap" — re-acquire (fish survives, scatters)
+      if (sh.timer<=0){ sh.state='patrol'; sh.timer=rnd(9,16); sh.target=null;
+        sh.u=Math.atan2(sh.pos[2]/7.5||0, 1); }                // rejoin the path roughly
+    }
+    boundsForce(sh.pos, sacc, 4, 16);
+    sh.vel[0]+=sacc[0]*dt; sh.vel[1]+=sacc[1]*dt; sh.vel[2]+=sacc[2]*dt;
+    let shs=Math.hypot(sh.vel[0],sh.vel[1],sh.vel[2])||1;
+    if (shs>shTopSpeed){ const k=shTopSpeed/shs; sh.vel[0]*=k; sh.vel[1]*=k; sh.vel[2]*=k; }
+    sh.pos[0]+=sh.vel[0]*dt; sh.pos[1]+=sh.vel[1]*dt; sh.pos[2]+=sh.vel[2]*dt;
+    containBox(sh.pos, sh.vel, 0.8);
     headingOf(sh, dt);
 
-    // a slowly drifting goal so the whole flock travels the volume as a body
-    const g=this.goal;
-    g[0]=Math.cos(t*0.07)*8.5;
-    g[1]=7.8+Math.sin(t*0.05)*3;
-    g[2]=Math.sin(t*0.091)*8.5;
+    // travelling goals (each school roams its own region/phase)
+    for (const s of this.schools){
+      s.goal[0]=Math.cos(t*s.gs[0]+s.gp)*8.5;
+      s.goal[1]=7.8+Math.sin(t*s.gs[1]+s.gp)*3;
+      s.goal[2]=Math.sin(t*s.gs[2]+s.gp)*8.5;
+    }
 
-    // --- Reynolds 3D boids: separation + alignment + cohesion -------------
+    // --- Reynolds 3D boids: flock within own school, avoid all neighbours --
     const B=this.boids;
     const PERC=6.0, PERC2=PERC*PERC, SEP=2.9, SEP2=SEP*SEP, MF=6;
-    const W_SEP=2.3, W_ALI=1.3, W_COH=0.8, W_GOAL=0.55, W_FLEE=3.2;
+    const W_SEP=2.3, W_ALI=1.3, W_COH=0.8, W_GOAL=0.55, W_FLEE=5.0;
+    const hunting = sh.state==='hunt';
     for (const c of B){
       const v=c.vel, sp0=Math.hypot(v[0],v[1],v[2])||1;
       const hx=v[0]/sp0, hy=v[1]/sp0, hz=v[2]/sp0;            // heading, for FOV
@@ -583,11 +631,12 @@ const LIFE = [
         const d2=dx*dx+dy*dy+dz*dz;
         if (d2>PERC2 || d2===0) continue;
         const d=Math.sqrt(d2);
-        if ((dx*hx+dy*hy+dz*hz)/d < -0.55) continue;          // ignore behind (~240° FOV)
+        if (d2<SEP2){ const w=1/d2; sx-=dx*w; sy-=dy*w; sz-=dz*w; }  // separate from ALL fish
+        if (o.school!==c.school) continue;                    // align/cohere only within own school
+        if ((dx*hx+dy*hy+dz*hz)/d < -0.55) continue;          // ~240° FOV
         n++;
-        cx+=o.pos[0]; cy+=o.pos[1]; cz+=o.pos[2];             // cohesion: avg position
-        ax+=o.vel[0]; ay+=o.vel[1]; az+=o.vel[2];             // alignment: avg velocity
-        if (d2<SEP2){ const w=1/d2; sx-=dx*w; sy-=dy*w; sz-=dz*w; }  // separation: 1/d^2 away
+        cx+=o.pos[0]; cy+=o.pos[1]; cz+=o.pos[2];
+        ax+=o.vel[0]; ay+=o.vel[1]; az+=o.vel[2];
       }
       const acc=[0,0,0];
       if (n>0){
@@ -599,41 +648,46 @@ const LIFE = [
         const sep=steerTo([sx,sy,sz], v, c.ms, MF);
         acc[0]+=sep[0]*W_SEP; acc[1]+=sep[1]*W_SEP; acc[2]+=sep[2]*W_SEP;
       }
-      // weak pull toward the travelling goal
+      const g=this.schools[c.school].goal;
       const go=steerTo([g[0]-c.pos[0], g[1]-c.pos[1], g[2]-c.pos[2]], v, c.ms, MF);
       acc[0]+=go[0]*W_GOAL; acc[1]+=go[1]*W_GOAL; acc[2]+=go[2]*W_GOAL;
 
-      // flee the shark — overrides flocking inside its radius
+      // flee the shark — stronger, wider, and harder while it hunts
       const fx=c.pos[0]-sh.pos[0], fy=c.pos[1]-sh.pos[1], fz=c.pos[2]-sh.pos[2];
       const fd2=fx*fx+fy*fy+fz*fz;
+      const FR = hunting ? 16 : 13;
       let panic=1;
-      if (fd2 < 121){                                         // within 11 units
-        const fl=steerTo([fx,fy,fz], v, c.ms*2, MF*2.2);
-        acc[0]+=fl[0]*W_FLEE; acc[1]+=fl[1]*W_FLEE; acc[2]+=fl[2]*W_FLEE;
-        panic=1.9;
+      if (fd2 < FR*FR){
+        const fl=steerTo([fx,fy,fz], v, c.ms*2.4, MF*2.8);
+        const w = W_FLEE * (hunting?1.5:1) * (1 + (FR-Math.sqrt(fd2))/FR);  // ramps up close
+        acc[0]+=fl[0]*w; acc[1]+=fl[1]*w; acc[2]+=fl[2]*w;
+        panic = hunting ? 2.6 : 2.0;
       }
       boundsForce(c.pos, acc);
 
-      // integrate, then hold a cruise speed (key to the murmuration feel)
       v[0]+=acc[0]*dt; v[1]+=acc[1]*dt; v[2]+=acc[2]*dt;
       let sp=Math.hypot(v[0],v[1],v[2])||1;
       const top=c.ms*panic, lo=c.ms*0.78;
       const tgt = sp>top?top : sp<lo?lo : sp;
       if (tgt!==sp){ const k=tgt/sp; v[0]*=k; v[1]*=k; v[2]*=k; }
       c.pos[0]+=v[0]*dt; c.pos[1]+=v[1]*dt; c.pos[2]+=v[2]*dt;
+      containBox(c.pos, v);
       headingOf(c, dt);
     }
   },
   gather(a){
     for (const c of this.boids){
+      const base = this.schools[c.school].hueIdx;
       gatherFaces(transformPts(fishVerts(c,t), c.pos, c.yaw, c.pitch, c.roll,
         [c.size,c.size,c.size]), FISH.f,
-        { h:mod(PAL.h[0]+c.hj,360), s:80, l0:17, l1:34, a:a, edge:30, edgeA:0.85 });
+        { h:mod(PAL.h[base]+c.hj,360), s:82, l0:17, l1:34, a:a, edge:30, edgeA:0.85 });
     }
     const sh=this.shark;
+    // shark flushes brighter/redder while hunting
+    const hunt = sh.state==='hunt';
     gatherFaces(transformPts(fishVerts(sh,t), sh.pos, sh.yaw, sh.pitch, sh.roll,
       [1.5,1.7,3.1]), FISH.f,
-      { h:PAL.h[1], s:55, l0:13, l1:26, a:a, edge:32, edgeA:0.8 });
+      { h:PAL.h[1], s:hunt?75:55, l0:hunt?20:13, l1:hunt?34:26, a:a, edge:32, edgeA:hunt?1:0.8 });
   }
 },
 { /* ---------------------------------------------------------- VOID MANTAS */
