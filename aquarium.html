@@ -99,7 +99,7 @@ const BND = { x:14, z:14, y0:3, y1:12.5 };
 /* --------------------------------------------------------------- camera */
 const cam = { pos:[0,10,-40], r:[1,0,0], u:[0,1,0], f:[0,0,1] };
 function updateCamera(t){
-  const ang = t*0.05;
+  const ang = t*0.0125;
   const R = 40 + Math.sin(t*0.021)*4;
   cam.pos = [Math.sin(ang)*R, 10.5+Math.sin(t*0.033)*2.5, -Math.cos(ang)*R];
   const tgt = [0, 5.2, 0];
@@ -336,7 +336,7 @@ const TANKS = [
   desc:'dark faceted seafloor split by one jagged magma crack flickering to the horizon',
   bg:'#070310', hues:[265,25,190],
   init(){
-    const N=14, EXT=27, meander = z => Math.sin(z*0.16)*4;
+    const N=22, EXT=48, meander = z => Math.sin(z*0.16)*4;
     const V=[], F=[];
     const hgt=(x,z)=>{
       let h = (Math.sin(x*0.31)+Math.cos(z*0.27))*0.45
@@ -528,11 +528,11 @@ const LIFE = [
   desc:'a shimmering boid school threading the tank while one shark rides an endless figure-eight',
   init(){
     this.boids=[];
-    for (let i=0;i<26;i++) this.boids.push({
+    for (let i=0;i<60;i++) this.boids.push({
       pos:[rnd(-10,10), rnd(BND.y0+1,BND.y1-1), rnd(-10,10)],
       vel:[rnd(-2,2), rnd(-.5,.5), rnd(-2,2)],
-      yaw:0,pitch:0,roll:0, ph:rnd(TAU), wf:rnd(7,10), wa:0.26,
-      size:rnd(0.65,0.95), hj:rnd(-14,14)
+      yaw:0,pitch:0,roll:0, ph:rnd(TAU), wf:rnd(8,11), wa:0.28,
+      size:rnd(0.34,0.52), hj:rnd(-14,14)
     });
     this.shark={ yaw:0,pitch:0,roll:0, ph:0, wf:2.6, wa:0.17, pos:[0,6,0], vel:[1,0,0] };
   },
@@ -564,15 +564,16 @@ const LIFE = [
         acc[1]+=(ny/n-c.pos[1])*0.3 + (ay/n-c.vel[1])*0.9;
         acc[2]+=(nz/n-c.pos[2])*0.3 + (az/n-c.vel[2])*0.9;
       }
-      // flee the shark
+      // flee the shark (strong, wide radius — the school scatters on approach)
       const fx=c.pos[0]-sh.pos[0], fy=c.pos[1]-sh.pos[1], fz=c.pos[2]-sh.pos[2];
       const fd2=fx*fx+fy*fy+fz*fz;
-      if (fd2<49){ const fd=Math.sqrt(fd2)||1, str=(7-fd)*3.2;
+      const FLEE=12, scared = fd2 < FLEE*FLEE;
+      if (scared){ const fd=Math.sqrt(fd2)||1, str=(FLEE-fd)*6.5;
         acc[0]+=fx/fd*str; acc[1]+=fy/fd*str; acc[2]+=fz/fd*str; }
       boundsForce(c.pos, acc);
       c.vel[0]+=acc[0]*dt*2.2; c.vel[1]+=acc[1]*dt*1.4; c.vel[2]+=acc[2]*dt*2.2;
       const sp=Math.hypot(c.vel[0],c.vel[1],c.vel[2])||1;
-      const mx = fd2<49 ? 8.5 : 4.6;
+      const mx = scared ? 11 : 4.6;
       if (sp>mx){ c.vel[0]*=mx/sp; c.vel[1]*=mx/sp; c.vel[2]*=mx/sp; }
       if (sp<1.4){ c.vel[0]*=1.05; c.vel[2]*=1.05; }
       c.pos[0]+=c.vel[0]*dt; c.pos[1]+=c.vel[1]*dt; c.pos[2]+=c.vel[2]*dt;
@@ -730,11 +731,11 @@ const LIFE = [
    LAYER MANAGER + UI
    =========================================================================== */
 const layers = {
-  tank:  { list:TANKS, cur:0, alpha:1, pending:-1 },
-  decor: { list:DECOR, cur:0, alpha:1, pending:-1 },
-  life:  { list:LIFE,  cur:0, alpha:1, pending:-1 },
+  tank:  { list:TANKS, cur:2, alpha:1, pending:-1 },   // ABYSS FISSURE
+  decor: { list:DECOR, cur:1, alpha:1, pending:-1 },   // VECTOR RUINS
+  life:  { list:LIFE,  cur:0, alpha:1, pending:-1 },   // SCHOOL + SHARK
 };
-for (const k in layers) layers[k].list[0].init();
+for (const k in layers) layers[k].list[layers[k].cur].init();
 
 function select(cat, i){
   const L=layers[cat];
@@ -788,6 +789,30 @@ window.addEventListener('keydown', ev=>{
   if (!uiHidden) poke();
 });
 
+/* ----------------------------------------------------- CRT screen overlay */
+let scanPat=null;
+function buildScan(){
+  const p=document.createElement('canvas'); p.width=1; p.height=3;
+  const pc=p.getContext('2d');
+  pc.fillStyle='rgba(0,0,0,0.22)'; pc.fillRect(0,2,1,1);   // dark every 3rd row
+  scanPat=ctx.createPattern(p,'repeat');
+}
+buildScan();
+function drawCRT(){
+  // scanlines
+  ctx.fillStyle=scanPat; ctx.fillRect(0,0,W,H);
+  // slow rolling brightness band
+  const by=mod(t*46,H+90)-45;
+  const g=ctx.createLinearGradient(0,by-34,0,by+34);
+  g.addColorStop(0,'rgba(255,255,255,0)');
+  g.addColorStop(0.5,'rgba(170,225,255,0.045)');
+  g.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=g; ctx.fillRect(0,by-34,W,68);
+  // very subtle phosphor flicker
+  ctx.fillStyle=`rgba(0,0,8,${0.02+Math.random()*0.022})`;
+  ctx.fillRect(0,0,W,H);
+}
+
 /* ===========================================================================
    MAIN LOOP
    =========================================================================== */
@@ -816,8 +841,9 @@ function tick(now){
   life.gather(layers.life.alpha);
   flush();
 
-  // vignette
+  // vignette + CRT
   ctx.fillStyle=vigGrad; ctx.fillRect(0,0,W,H);
+  drawCRT();
 
   requestAnimationFrame(tick);
 }
