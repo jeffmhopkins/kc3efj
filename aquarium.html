@@ -94,7 +94,7 @@ const FOG0 = 34, FOG1 = 95;
 const fogAt = z => clamp(1-(z-FOG0)/(FOG1-FOG0), 0, 1);
 
 // creatures swim inside this volume (fits every tank)
-const BND = { x:14, z:14, y0:3, y1:12.5 };
+const BND = { x:27, z:27, y0:2.5, y1:16 };
 
 /* --------------------------------------------------------------- camera */
 const cam = { pos:[0,10,-40], r:[1,0,0], u:[0,1,0], f:[0,0,1] };
@@ -291,7 +291,8 @@ const TANKS = [
   desc:'a wireframe containment cube in the void — corner nodes breathe, data runs the edges',
   bg:'#03060c', hues:[165,210,320],
   init(){
-    const s=16, h=17;
+    const s=28, h=19;
+    this.S=s;
     this.C = [[-s,0,-s],[s,0,-s],[s,0,s],[-s,0,s],[-s,h,-s],[s,h,-s],[s,h,s],[-s,h,s]];
     this.E = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
     this.oct = octa();
@@ -305,11 +306,12 @@ const TANKS = [
   draw2d(){},
   gather(a){
     // floor: dark slab + faint panel lines
-    gatherFaces([[-16,0,-16],[16,0,-16],[16,0,16],[-16,0,16]], [{i:[0,1,2,3],both:1}],
+    const s=this.S;
+    gatherFaces([[-s,0,-s],[s,0,-s],[s,0,s],[-s,0,s]], [{i:[0,1,2,3],both:1}],
       { h:PAL.h[1], s:40, l0:5, l1:5, a:a, edgeA:0 });
-    for (let k=-12; k<=12; k+=4){
-      line3([k,0.04,-16],[k,0.04,16], PAL.h[1], 60, 40, 0.14*a);
-      line3([-16,0.04,k],[16,0.04,k], PAL.h[1], 60, 40, 0.14*a);
+    for (let k=-s+4; k<=s-4; k+=4){
+      line3([k,0.04,-s],[k,0.04,s], PAL.h[1], 60, 40, 0.14*a);
+      line3([-s,0.04,k],[s,0.04,k], PAL.h[1], 60, 40, 0.14*a);
     }
     // the cube
     for (const [i,j] of this.E)
@@ -389,8 +391,8 @@ const DECOR = [
   init(){
     this.oct = octa();
     this.spires = [];
-    const sites = [[-9,-7],[8,-9],[3,10]];
-    for (let s=0;s<3;s++){
+    const sites = [[-20,-13],[15,-17],[21,9],[-6,21],[-23,5],[8,-3],[3,15],[-13,-20]];
+    for (let s=0;s<sites.length;s++){
       const [bx,bz]=sites[s], n=3+s%2;
       for (let k=0;k<n;k++){
         const big = k===0;
@@ -425,27 +427,35 @@ const DECOR = [
     this.lint = box(5.8, 1.1, 1.6);
     this.pyr  = { v:[[-2.4,0,-2.4],[2.4,0,-2.4],[2.4,0,2.4],[-2.4,0,2.4],[0,3.4,0]],
       f:[{i:[0,1,4],both:1},{i:[1,2,4],both:1},{i:[2,3,4],both:1},{i:[3,0,4],both:1}] };
+    // scatter columns across the whole floor (bases sunk so they embed)
+    this.items=[];
+    const spots=[[-21,-15],[-11,-21],[3,-23],[15,-20],[23,-7],[22,8],[13,20],[-3,23],
+                 [-18,17],[-24,4],[-9,-3],[10,5],[7,-13],[-14,-9],[18,-2],[-6,11]];
+    for (const [x,z] of spots){
+      if (Math.random()<0.72) this.items.push({ m:this.col,  pos:[x,-1.5,z], yaw:rnd(TAU), pitch:0, roll:0 });
+      else                    this.items.push({ m:this.col2, pos:[x,0.85,z], yaw:rnd(TAU), pitch:Math.PI*0.49, roll:rnd(-0.1,0.1) });
+    }
+    this.pyrs=[{pos:[19,-1.6,12], yaw:0.7, roll:0.18},{pos:[-20,-1.6,-9], yaw:-0.5, roll:-0.12}];
+    this.arches=[{x:8,z:-9},{x:-15,z:11}];
     this.u = 0;
   },
   update(dt){ this.u += dt*0.5; },
   gather(a){
     const st = { h:PAL.h[0], s:28, l0:11, l1:18, a:a, edge:30, edgeA:0.5 };
-    // standing columns
-    gatherFaces(transformPts(this.col.v,  [-10,0,-4]), this.col.f, st);
-    gatherFaces(transformPts(this.col2.v, [-12.5,0,2], 0.4), this.col2.f, st);
-    // toppled column lying across the sand
-    gatherFaces(transformPts(this.col2.v, [-6,0.85,3], 0.7, Math.PI/2*0.96), this.col2.f, st);
-    // sunken tilted pyramid
-    gatherFaces(transformPts(this.pyr.v, [10,-1.1,6], 0.7, 0, 0.18), this.pyr.f, st);
-    // broken arch: two stubs + lintel resting askew
-    const ax=7, az=-8;
-    gatherFaces(transformPts(this.stub.v, [ax-2.6,0,az]), this.stub.f, st);
-    gatherFaces(transformPts(this.stub.v, [ax+2.6,0,az], 0.2), this.stub.f, st);
-    gatherFaces(transformPts(this.lint.v, [ax,5.1,az], 0.06, 0, 0.07), this.lint.f, st);
-    // firefly drifting a figure-eight through the arch
-    const u=this.u;
-    point3([ax+Math.sin(u)*3.4, 2.6+Math.sin(2*u)*1.4, az+Math.cos(u)*1.4],
-           0.16, PAL.h[2], 100, 72, 0.9*a);
+    for (const it of this.items)
+      gatherFaces(transformPts(it.m.v, it.pos, it.yaw, it.pitch, it.roll), it.m.f, st);
+    for (const p of this.pyrs)
+      gatherFaces(transformPts(this.pyr.v, p.pos, p.yaw, 0, p.roll), this.pyr.f, st);
+    // broken arches with a firefly drifting a figure-eight through each
+    for (let ai=0; ai<this.arches.length; ai++){
+      const ax=this.arches[ai].x, az=this.arches[ai].z;
+      gatherFaces(transformPts(this.stub.v, [ax-2.6,-0.5,az]), this.stub.f, st);
+      gatherFaces(transformPts(this.stub.v, [ax+2.6,-0.5,az], 0.2), this.stub.f, st);
+      gatherFaces(transformPts(this.lint.v, [ax,4.6,az], 0.06, 0, 0.07), this.lint.f, st);
+      const u=this.u+ai*2.3;
+      point3([ax+Math.sin(u)*3.4, 2.4+Math.sin(2*u)*1.4, az+Math.cos(u)*1.4],
+             0.16, PAL.h[2], 100, 72, 0.9*a);
+    }
   }
 },
 { /* ---------------------------------------------------------- SIGNAL KELP */
@@ -453,10 +463,11 @@ const DECOR = [
   desc:'a row of swaying ribbon antennae, near-black blades traced in neon, hot buds at the tips',
   init(){
     this.strands=[];
-    const X=[-11,-6,0,6,11], Z=[5,8,10,8,5];
-    for (let k=0;k<5;k++){
+    const spots=[[-21,-10],[-12,9],[-4,-19],[5,15],[13,-7],[21,13],[-19,19],[17,21],
+                 [0,1],[9,-16],[-8,-2],[23,-3]];
+    for (const [x,z] of spots){
       const dir=rnd(TAU);
-      this.strands.push({ x:X[k], z:Z[k], h:rnd(8,11.5), ph:rnd(TAU),
+      this.strands.push({ x, z, h:rnd(8,12), ph:rnd(TAU),
         px:Math.cos(dir), pz:Math.sin(dir) });
     }
     this.oct = octa();
@@ -557,7 +568,7 @@ const LIFE = [
     this.boids=[];
     const make=(sch,n)=>{ for(let i=0;i<n;i++) this.boids.push({
       school:sch,
-      pos:[rnd(-9,9), rnd(BND.y0+1.5,BND.y1-1.5), rnd(-9,9)],
+      pos:[rnd(-BND.x+4,BND.x-4), rnd(BND.y0+1.5,BND.y1-1.5), rnd(-BND.z+4,BND.z-4)],
       vel:[rnd(-1,1),rnd(-.3,.3),rnd(-1,1)],
       yaw:0,pitch:0,roll:0, ph:rnd(TAU), wf:rnd(8,11), wa:0.3,
       size:rnd(0.32,0.46), hj:rnd(-12,12), ms:rnd(3.0,3.9)   // slower cruise
@@ -576,7 +587,7 @@ const LIFE = [
     return best;
   },
   update(dt){
-    const P=u=>[Math.sin(u)*11.5, 6.5+Math.sin(u*0.6)*2.2, Math.sin(2*u)*7.5];
+    const P=u=>[Math.sin(u)*(BND.x*0.8), 8.5+Math.sin(u*0.6)*3.5, Math.sin(2*u)*(BND.z*0.58)];
     const sh=this.shark;
 
     // -- shark state machine: long calm patrol, occasional aggressive hunt --
@@ -611,15 +622,15 @@ const LIFE = [
 
     // travelling goals (each school roams its own region/phase)
     for (const s of this.schools){
-      s.goal[0]=Math.cos(t*s.gs[0]+s.gp)*8.5;
-      s.goal[1]=7.8+Math.sin(t*s.gs[1]+s.gp)*3;
-      s.goal[2]=Math.sin(t*s.gs[2]+s.gp)*8.5;
+      s.goal[0]=Math.cos(t*s.gs[0]+s.gp)*(BND.x*0.7);
+      s.goal[1]=9+Math.sin(t*s.gs[1]+s.gp)*4.5;
+      s.goal[2]=Math.sin(t*s.gs[2]+s.gp)*(BND.z*0.7);
     }
 
     // --- Reynolds 3D boids: flock within own school, avoid all neighbours --
     const B=this.boids;
-    const PERC=6.0, PERC2=PERC*PERC, SEP=2.9, SEP2=SEP*SEP, MF=6;
-    const W_SEP=2.3, W_ALI=1.3, W_COH=0.8, W_GOAL=0.55, W_FLEE=5.0;
+    const PERC=8.5, PERC2=PERC*PERC, SEP=2.9, SEP2=SEP*SEP, MF=6;
+    const W_SEP=2.3, W_ALI=1.35, W_COH=0.95, W_GOAL=0.9, W_FLEE=5.0;
     const hunting = sh.state==='hunt';
     for (const c of B){
       const v=c.vel, sp0=Math.hypot(v[0],v[1],v[2])||1;
@@ -766,7 +777,7 @@ const LIFE = [
     this.eels=[];
     const N=16, SEG=0.8;
     for (let k=0;k<4;k++){
-      const head=[rnd(-9,9), lerp(BND.y0+1.5, BND.y1-1.5, k/3), rnd(-9,9)];
+      const head=[rnd(-BND.x*0.6,BND.x*0.6), lerp(BND.y0+1.5, BND.y1-1.5, k/3), rnd(-BND.z*0.6,BND.z*0.6)];
       const pts=[]; for (let i=0;i<N;i++) pts.push([head[0], head[1], head[2]-i*SEG]);
       this.eels.push({ pts, N, SEG, vel:[rnd(-2,2),0,rnd(-2,2)], wander:rnd(TAU),
         hue:k, ph:rnd(TAU), spd:rnd(3.6,4.6) });
