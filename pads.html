@@ -301,9 +301,10 @@ function latticeTower(cx,cz,w,d,h,bays,mat,opt){
     line3([cx-cw,t,cz],[cx-cw,t-4,cz],mat,0,1); }
 }
 // slender hinged strongback beside rocket; tilts `tilt` rad away from rocket (+x)
-function strongback(bx,bz,L,w,tilt,mat,fracs,reachX){
+function strongback(bx,bz,L,w,tilt,mat,fracs,reachX,y0){
+  y0=y0||0;        // base elevation: TE hinges at the pad surface (raised at 39A)
   const ux=Math.sin(tilt),uy=Math.cos(tilt), hw=w/2, cs=Math.cos(tilt),sn=Math.sin(tilt);
-  const P=(t,a,b)=>[ bx+ux*t + cs*hw*a, uy*t - sn*hw*a, bz + hw*b ];
+  const P=(t,a,b)=>[ bx+ux*t + cs*hw*a, y0 + uy*t - sn*hw*a, bz + hw*b ];
   const ch=[[-1,-1],[1,-1],[1,1],[-1,1]];
   for(const [a,b] of ch) line3(P(0,a,b),P(L,a,b),mat,0,1.3);
   const bays=Math.max(6,Math.round(L/5));
@@ -318,9 +319,10 @@ function strongback(bx,bz,L,w,tilt,mat,fracs,reachX){
 }
 // Falcon Heavy widened TE base: straddles the two side cores (z=±sideZ) for the bottom `height` m,
 // with two low side-booster umbilical arms. Tilts with the strongback (hinge at bx).
-function fhBase(bx,bz,zHalf,height,w,tilt,mat,sideZ){
+function fhBase(bx,bz,zHalf,height,w,tilt,mat,sideZ,y0){
+  y0=y0||0;
   const ux=Math.sin(tilt),uy=Math.cos(tilt), cs=Math.cos(tilt),sn=Math.sin(tilt), hw=w/2;
-  const P=(t,a,z)=>[ bx+ux*t+cs*hw*a, uy*t-sn*hw*a, bz+z ];
+  const P=(t,a,z)=>[ bx+ux*t+cs*hw*a, y0 + uy*t-sn*hw*a, bz+z ];
   const corn=[[-1,-zHalf],[1,-zHalf],[1,zHalf],[-1,zHalf]];
   for(const [a,z] of corn) line3(P(0,a,z),P(height,a,z),mat,0,1.2);
   const bays=Math.max(2,Math.round(height/5));
@@ -382,22 +384,22 @@ function drawGSE(p, lf){
   drawGround(p.pad, PAL.pad);
   if (p.fam==='falcon'){
     const sbX=1.85+2.6, tilt=lf*45*D2R, sbW=p.fh?4:3;
-    // claws grab the rocket body, which starts at the elevated baseY (39A sits on the mound)
-    const cl=[(p.baseY+3)/p.sbLen,(p.baseY+33)/p.sbLen,(p.baseY+58)/p.sbLen];
+    // TE hinges at the pad surface (p.baseY); claws grab the rocket body above it
+    const cl=[3/p.sbLen,33/p.sbLen,58/p.sbLen];
     if (p.site==='39A') mound(p.pad, p.baseY, F, ST, p.fh?7:4);
     else drawBox(0,0,0,9,p.baseY,9,ST);                 // low pad deck
     if (p.fh){                                           // Falcon Heavy: 3-core mount + widened TE base
       drawBox(0,p.baseY,0,6,5,6,ST);                     // center-core reaction frame
       for(const s of [1,-1]) drawBox(0,p.baseY,s*5.5,4,4,3,ST);   // outboard compression-bridge pedestals
-      strongback(sbX,0,p.sbLen,sbW,tilt,F,cl,sbX-1.85);
-      fhBase(sbX,0,6,p.baseY+12,3,tilt,F,3.66);          // widened base rises from ground through the mound
+      strongback(sbX,0,p.sbLen,sbW,tilt,F,cl,sbX-1.85,p.baseY);
+      fhBase(sbX,0,6,16,3,tilt,F,3.66,p.baseY);          // widened base straddling the side cores
     } else {
       drawBox(0,p.baseY,0,7,5,7,ST);                     // single-core launch mount / reaction frame
-      strongback(sbX,0,p.sbLen,sbW,tilt,F,cl,sbX-1.85);
+      strongback(sbX,0,p.sbLen,sbW,tilt,F,cl,sbX-1.85,p.baseY);
     }
-    if (p.site==='40'){ const tx=-(1.85+1.6+4.5), nf=tx+4.5;       // SpaceX crew tower ~85m, close in
+    if (p.site==='40'){ const tx=-(1.85+5+4.5), nf=tx+4.5;         // SpaceX crew tower ~85m, set back from rocket
       latticeTower(tx,0,9,9,85,12,F); crewArm(nf,0,p.baseY+56,-nf-1.85,1-lf,F);
-      mast(10,-12,52,F); mast(-12,11,46,F); }
+      mast(11,-13,52,F); mast(-15,12,46,F); }
     if (p.site==='39A'){ const tx=-(1.85+1.6+5.5), nf=tx+5.5, ft=p.baseY+104;   // FSS rises from the raised pad surface
       latticeTower(tx,p.baseY,11,11,104,13,F,{crown:true,y0:p.baseY});
       line3([tx,ft,0],[tx,ft+20,0],F,0,1.3); line3([tx-2.4,ft+16,0],[tx+2.4,ft+16,0],F,0,1);  // roof lightning mast
@@ -418,7 +420,7 @@ function drawGSE(p, lf){
 // grid order: row0 falcon, row1 starship
 const PADS = [
   { id:16,  name:'SLC-4E', loc:'VANDENBERG',        fam:'falcon',   site:'4E', fh:true, pad:28, baseY:2,  sbLen:66, contentH:82 },
-  { id:87,  name:'LC-39A', loc:'KENNEDY · FH PAD',  fam:'falcon',   site:'39A', fh:true, pad:44, baseY:20, sbLen:84, contentH:134 },
+  { id:87,  name:'LC-39A', loc:'KENNEDY · FH PAD',  fam:'falcon',   site:'39A', fh:true, pad:44, baseY:20, sbLen:66, contentH:134 },
   { id:80,  name:'SLC-40', loc:'CAPE CANAVERAL',    fam:'falcon',   site:'40',    pad:28, baseY:2,  sbLen:66, contentH:96 },
   { id:188, name:'PAD 1',  loc:'STARBASE · OLM-A',  fam:'starship', site:'pad1',  pad:34, baseY:20, olmH:20, towerH:146, towerBays:14, armLen:11,  contentH:150 },
   { id:235, name:'PAD 2',  loc:'STARBASE · OLM-B',  fam:'starship', site:'pad2',  pad:34, baseY:4,  olmH:4,  towerH:145, towerBays:14, armLen:8.5, contentH:150 },
