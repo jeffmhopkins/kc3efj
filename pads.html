@@ -382,16 +382,18 @@ function drawGSE(p, lf){
   drawGround(p.pad, PAL.pad);
   if (p.fam==='falcon'){
     const sbX=1.85+2.6, tilt=lf*45*D2R, sbW=p.fh?4:3;
+    // claws grab the rocket body, which starts at the elevated baseY (39A sits on the mound)
+    const cl=[(p.baseY+3)/p.sbLen,(p.baseY+33)/p.sbLen,(p.baseY+58)/p.sbLen];
     if (p.site==='39A') mound(p.pad, p.baseY, F, ST, p.fh?7:4);
     else drawBox(0,0,0,9,p.baseY,9,ST);                 // low pad deck
     if (p.fh){                                           // Falcon Heavy: 3-core mount + widened TE base
       drawBox(0,p.baseY,0,6,5,6,ST);                     // center-core reaction frame
       for(const s of [1,-1]) drawBox(0,p.baseY,s*5.5,4,4,3,ST);   // outboard compression-bridge pedestals
-      strongback(sbX,0,p.sbLen,sbW,tilt,F,[0.07,0.46,0.86],sbX-1.85);
-      fhBase(sbX,0,6,15,3,tilt,F,3.66);                  // widened base straddling side cores + side umbilicals
+      strongback(sbX,0,p.sbLen,sbW,tilt,F,cl,sbX-1.85);
+      fhBase(sbX,0,6,15,3,tilt,F,3.66);                  // widened base straddling side cores (under the mound at 39A)
     } else {
       drawBox(0,p.baseY,0,7,5,7,ST);                     // single-core launch mount / reaction frame
-      strongback(sbX,0,p.sbLen,sbW,tilt,F,[0.07,0.46,0.86],sbX-1.85);
+      strongback(sbX,0,p.sbLen,sbW,tilt,F,cl,sbX-1.85);
     }
     if (p.site==='40'){ latticeTower(-(1.85+7),0,11,11,88,12,F); crewArm(-(1.85+7)+5.5,0,72,16,1-lf,F);
       mast(11,-12,52,F); mast(-11,11,46,F); }
@@ -412,9 +414,9 @@ function drawGSE(p, lf){
 /* --------------------------------------------------------- pad config */
 // grid order: row0 falcon, row1 starship
 const PADS = [
-  { id:16,  name:'SLC-4E', loc:'VANDENBERG',        fam:'falcon',   site:'4E', fh:true, pad:28, baseY:2,  sbLen:64, contentH:82 },
-  { id:87,  name:'LC-39A', loc:'KENNEDY · FH PAD',  fam:'falcon',   site:'39A', fh:true, pad:40, baseY:10, sbLen:66, contentH:98 },
-  { id:80,  name:'SLC-40', loc:'CAPE CANAVERAL',    fam:'falcon',   site:'40',    pad:28, baseY:2,  sbLen:64, contentH:88 },
+  { id:16,  name:'SLC-4E', loc:'VANDENBERG',        fam:'falcon',   site:'4E', fh:true, pad:28, baseY:2,  sbLen:66, contentH:82 },
+  { id:87,  name:'LC-39A', loc:'KENNEDY · FH PAD',  fam:'falcon',   site:'39A', fh:true, pad:40, baseY:10, sbLen:74, contentH:98 },
+  { id:80,  name:'SLC-40', loc:'CAPE CANAVERAL',    fam:'falcon',   site:'40',    pad:28, baseY:2,  sbLen:66, contentH:88 },
   { id:188, name:'PAD 1',  loc:'STARBASE · OLM-A',  fam:'starship', site:'pad1',  pad:34, baseY:20, olmH:20, towerH:146, towerBays:14, armLen:11,  contentH:150 },
   { id:235, name:'PAD 2',  loc:'STARBASE · OLM-B',  fam:'starship', site:'pad2',  pad:34, baseY:4,  olmH:4,  towerH:145, towerBays:14, armLen:8.5, contentH:150 },
   { id:203, name:'39A SS', loc:'KENNEDY · STARSHIP',fam:'starship', site:'39ass', pad:34, baseY:5,  olmH:5,  towerH:104, towerBays:10, armLen:8.5, contentH:150 },
