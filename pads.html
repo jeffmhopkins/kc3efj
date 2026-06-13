@@ -395,10 +395,12 @@ function drawGSE(p, lf){
       drawBox(0,p.baseY,0,7,5,7,ST);                     // single-core launch mount / reaction frame
       strongback(sbX,0,p.sbLen,sbW,tilt,F,cl,sbX-1.85);
     }
-    if (p.site==='40'){ latticeTower(-(1.85+7),0,11,11,88,12,F); crewArm(-(1.85+7)+5.5,0,72,16,1-lf,F);
-      mast(11,-12,52,F); mast(-11,11,46,F); }
-    if (p.site==='39A'){ latticeTower(-(1.85+8),0,12,12,106,14,F,{crown:true}); mast(-(1.85+8),0,128,F);
-      crewArm(-(1.85+8)+6,0,82,20,1-lf,F); }
+    if (p.site==='40'){ const tx=-(1.85+1.6+4.5), nf=tx+4.5;       // SpaceX crew tower ~85m, close in
+      latticeTower(tx,0,9,9,85,12,F); crewArm(nf,0,p.baseY+56,-nf-1.85,1-lf,F);
+      mast(10,-12,52,F); mast(-12,11,46,F); }
+    if (p.site==='39A'){ const tx=-(1.85+1.6+5.5), nf=tx+5.5;       // FSS ~104m + hammerhead + roof mast
+      latticeTower(tx,0,11,11,104,13,F,{crown:true}); mast(tx,0,126,F);
+      crewArm(nf,0,p.baseY+56,-nf-1.85,1-lf,F); }
     if (p.site==='4E'){ mast(11,8,46,F); mast(-10,10,38,F); mast(9,-12,53,F); mast(-11,-9,40,F); }
   } else {
     const towerX=4.5+6+2, th=p.towerH;
@@ -415,8 +417,8 @@ function drawGSE(p, lf){
 // grid order: row0 falcon, row1 starship
 const PADS = [
   { id:16,  name:'SLC-4E', loc:'VANDENBERG',        fam:'falcon',   site:'4E', fh:true, pad:28, baseY:2,  sbLen:66, contentH:82 },
-  { id:87,  name:'LC-39A', loc:'KENNEDY · FH PAD',  fam:'falcon',   site:'39A', fh:true, pad:40, baseY:10, sbLen:74, contentH:98 },
-  { id:80,  name:'SLC-40', loc:'CAPE CANAVERAL',    fam:'falcon',   site:'40',    pad:28, baseY:2,  sbLen:66, contentH:88 },
+  { id:87,  name:'LC-39A', loc:'KENNEDY · FH PAD',  fam:'falcon',   site:'39A', fh:true, pad:40, baseY:10, sbLen:74, contentH:116 },
+  { id:80,  name:'SLC-40', loc:'CAPE CANAVERAL',    fam:'falcon',   site:'40',    pad:28, baseY:2,  sbLen:66, contentH:96 },
   { id:188, name:'PAD 1',  loc:'STARBASE · OLM-A',  fam:'starship', site:'pad1',  pad:34, baseY:20, olmH:20, towerH:146, towerBays:14, armLen:11,  contentH:150 },
   { id:235, name:'PAD 2',  loc:'STARBASE · OLM-B',  fam:'starship', site:'pad2',  pad:34, baseY:4,  olmH:4,  towerH:145, towerBays:14, armLen:8.5, contentH:150 },
   { id:203, name:'39A SS', loc:'KENNEDY · STARSHIP',fam:'starship', site:'39ass', pad:34, baseY:5,  olmH:5,  towerH:104, towerBays:10, armLen:8.5, contentH:150 },
