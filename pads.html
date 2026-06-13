@@ -38,10 +38,27 @@
   #panel button.act:hover { border-color:#ffd27c; color:#fff0d0; }
   #panel .keys { color:#3c5a64; font-size:9px; margin-top:7px; border-top:1px solid rgba(94,242,255,.12); padding-top:6px; }
   #note { color:#54808c; font-size:9px; margin-top:5px; min-height:11px; }
+  #mode {
+    position:fixed; right:12px; top:10px; z-index:20; display:flex;
+    font:11px 'Courier New', ui-monospace, monospace;
+    background:rgba(4,6,14,.7); border-radius:7px;
+    backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+  }
+  #mode button {
+    font:bold 11px 'Courier New', monospace; letter-spacing:.6px; color:#6f97a0;
+    background:transparent; border:1px solid rgba(94,242,255,.22); cursor:pointer; padding:6px 12px;
+  }
+  #mode button:first-child { border-radius:7px 0 0 7px; }
+  #mode button:last-child { border-radius:0 7px 7px 0; border-left:none; }
+  #mode button.on { color:#5ef2ff; border-color:#5ef2ff; background:rgba(14,43,51,.85); text-shadow:0 0 6px rgba(94,242,255,.8); }
+  #modenote { position:fixed; right:12px; top:42px; z-index:20; text-align:right;
+    font:9px 'Courier New', monospace; color:#4a6f7a; max-width:50vw; pointer-events:none; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="mode"><button data-m="live">LIVE</button><button data-m="mock">DEMO</button></div>
+<div id="modenote"></div>
 <script>
 "use strict";
 /* ===========================================================================
@@ -441,7 +458,7 @@ function seedMock(now){
 /* ----------------------------------------------------- state + render */
 const WINDOW_MS = 6*3600e3;          // show a rocket if launch within this window
 const ASCENT = 5.2;                  // visual liftoff accel (m/s^2-ish)
-let DATA='mock';
+let DATA='live';
 
 function updatePad(p, now){
   if (p.net==null){ p.phase='empty'; return; }
@@ -599,7 +616,17 @@ function launchNext(){
   let best=null; for (const p of PADS) if (p.net && p.net>Date.now() && (!best||p.net<best.net)) best=p;
   if (best) best.net = Date.now()+1500;
 }
-function note(){}   // no-op (control panel removed)
+function note(s){ const e=document.getElementById('modenote'); if(e) e.textContent=s||''; }
+
+/* ------------------------------------------------ LIVE / DEMO toggle */
+const modeEl=document.getElementById('mode');
+function updateModeUI(){ for(const b of modeEl.children) b.classList.toggle('on', b.dataset.m===DATA); }
+function setData(m){
+  if(m===DATA && m==='mock'){ seedMock(Date.now()); return; }   // re-shuffle demo on re-tap
+  DATA=m; updateModeUI();
+  if(m==='live') goLive(); else { seedMock(Date.now()); note('demo · synthetic data, every pad state shown'); }
+}
+for(const b of modeEl.children) b.addEventListener('click', ()=>setData(b.dataset.m));
 
 /* ------------------------------------------------------- live (LL2) */
 async function goLive(){
@@ -616,7 +643,7 @@ async function goLive(){
       localStorage.setItem('padcache', JSON.stringify({t:Date.now(), d:data}));
     }
     applyLive(data); note('live · LL2 (cached 5m, ~15 req/hr free tier).');
-  }catch(e){ DATA='mock'; seedMock(Date.now()); buildModels(); }
+  }catch(e){ DATA='mock'; updateModeUI(); seedMock(Date.now()); note('live fetch failed ('+e.message+') — showing demo'); }
 }
 function applyLive(results){
   for (const p of PADS){ p.veh=null; p.net=null; p.status='CLEAR'; p.phase='empty'; p.y=0; }
@@ -650,13 +677,16 @@ addEventListener('keydown', e=>{
   else if (k==='c') CAM = CAM==='auto'?'orbit':CAM==='orbit'?'fixed':CAM==='fixed'?'front':'auto';
   else if (k==='p') PLUME = PLUME==='cone'?'particles':PLUME==='particles'?'solid':'cone';
   else if (k==='l') launchNext();
-  else if (k==='m'){ DATA = DATA==='mock'?'live':'mock'; if(DATA==='live') goLive(); else seedMock(Date.now()); }
+  else if (k==='m'){ setData(DATA==='mock'?'live':'mock'); return; }
   else return;
   buildModels();
 });
 
 /* --------------------------------------------------------------- go */
-buildModels(); seedMock(Date.now());
+buildModels(); seedMock(Date.now());          // show something immediately
+updateModeUI();
+if (DATA==='live') goLive();                   // default to live; falls back to demo on failure
+setInterval(()=>{ if(DATA==='live') goLive(); }, 5*60e3);   // refresh live every 5 min (cached)
 requestAnimationFrame(frame);
 </script>
 </body>
