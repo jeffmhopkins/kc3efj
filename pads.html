@@ -285,20 +285,20 @@ function drawGround(size, mat){
 }
 // vertical box-truss tower: 4 legs + rungs + X-braces; opt.crown hammerhead, opt.base solid lower block
 function latticeTower(cx,cz,w,d,h,bays,mat,opt){
-  opt=opt||{};
+  opt=opt||{}; const yb=opt.y0||0;          // base elevation (39A FSS rises from the raised pad surface)
   const hx=w/2,hz=d/2, c=[[cx-hx,cz-hz],[cx+hx,cz-hz],[cx+hx,cz+hz],[cx-hx,cz+hz]];
-  for(const [x,z] of c) line3([x,0,z],[x,h,z],mat,0,1.3);
+  for(const [x,z] of c) line3([x,yb,z],[x,yb+h,z],mat,0,1.3);
   const dy=h/bays;
-  for(let b=0;b<=bays;b++){ const y=b*dy; for(let k=0;k<4;k++){ const a=c[k],e=c[(k+1)%4];
+  for(let b=0;b<=bays;b++){ const y=yb+b*dy; for(let k=0;k<4;k++){ const a=c[k],e=c[(k+1)%4];
     line3([a[0],y,a[1]],[e[0],y,e[1]],mat,0,.9); } }
-  for(let b=0;b<bays;b++){ const y0=b*dy,y1=(b+1)*dy; for(let k=0;k<4;k++){ const a=c[k],e=c[(k+1)%4];
+  for(let b=0;b<bays;b++){ const y0=yb+b*dy,y1=yb+(b+1)*dy; for(let k=0;k<4;k++){ const a=c[k],e=c[(k+1)%4];
     if((b+k)%2) line3([a[0],y0,a[1]],[e[0],y1,e[1]],mat,0,.6);
     else        line3([a[0],y1,a[1]],[e[0],y0,e[1]],mat,0,.6); } }
-  if(opt.base) drawBox(cx,0,cz,w*1.08,opt.base,d*1.08,opt.baseMat||mat);   // concrete-filled base
-  if(opt.crown){ const cw=w*0.6;                                          // hammerhead crane
-    line3([cx-cw,h,cz],[cx+cw*1.9,h,cz],mat,0,1.5);
-    line3([cx+cw*1.9,h,cz],[cx+cw*1.9,h-7,cz],mat,0,1.1);
-    line3([cx-cw,h,cz],[cx-cw,h-4,cz],mat,0,1); }
+  if(opt.base) drawBox(cx,yb,cz,w*1.08,opt.base,d*1.08,opt.baseMat||mat);  // concrete-filled base
+  if(opt.crown){ const t=yb+h, cw=w*0.6;                                  // hammerhead crane
+    line3([cx-cw,t,cz],[cx+cw*1.9,t,cz],mat,0,1.5);
+    line3([cx+cw*1.9,t,cz],[cx+cw*1.9,t-7,cz],mat,0,1.1);
+    line3([cx-cw,t,cz],[cx-cw,t-4,cz],mat,0,1); }
 }
 // slender hinged strongback beside rocket; tilts `tilt` rad away from rocket (+x)
 function strongback(bx,bz,L,w,tilt,mat,fracs,reachX){
@@ -390,7 +390,7 @@ function drawGSE(p, lf){
       drawBox(0,p.baseY,0,6,5,6,ST);                     // center-core reaction frame
       for(const s of [1,-1]) drawBox(0,p.baseY,s*5.5,4,4,3,ST);   // outboard compression-bridge pedestals
       strongback(sbX,0,p.sbLen,sbW,tilt,F,cl,sbX-1.85);
-      fhBase(sbX,0,6,15,3,tilt,F,3.66);                  // widened base straddling side cores (under the mound at 39A)
+      fhBase(sbX,0,6,p.baseY+12,3,tilt,F,3.66);          // widened base rises from ground through the mound
     } else {
       drawBox(0,p.baseY,0,7,5,7,ST);                     // single-core launch mount / reaction frame
       strongback(sbX,0,p.sbLen,sbW,tilt,F,cl,sbX-1.85);
@@ -398,8 +398,9 @@ function drawGSE(p, lf){
     if (p.site==='40'){ const tx=-(1.85+1.6+4.5), nf=tx+4.5;       // SpaceX crew tower ~85m, close in
       latticeTower(tx,0,9,9,85,12,F); crewArm(nf,0,p.baseY+56,-nf-1.85,1-lf,F);
       mast(10,-12,52,F); mast(-12,11,46,F); }
-    if (p.site==='39A'){ const tx=-(1.85+1.6+5.5), nf=tx+5.5;       // FSS ~104m + hammerhead + roof mast
-      latticeTower(tx,0,11,11,104,13,F,{crown:true}); mast(tx,0,126,F);
+    if (p.site==='39A'){ const tx=-(1.85+1.6+5.5), nf=tx+5.5, ft=p.baseY+104;   // FSS rises from the raised pad surface
+      latticeTower(tx,p.baseY,11,11,104,13,F,{crown:true,y0:p.baseY});
+      line3([tx,ft,0],[tx,ft+20,0],F,0,1.3); line3([tx-2.4,ft+16,0],[tx+2.4,ft+16,0],F,0,1);  // roof lightning mast
       crewArm(nf,0,p.baseY+56,-nf-1.85,1-lf,F); }
     if (p.site==='4E'){ mast(11,8,46,F); mast(-10,10,38,F); mast(9,-12,53,F); mast(-11,-9,40,F); }
   } else {
@@ -417,7 +418,7 @@ function drawGSE(p, lf){
 // grid order: row0 falcon, row1 starship
 const PADS = [
   { id:16,  name:'SLC-4E', loc:'VANDENBERG',        fam:'falcon',   site:'4E', fh:true, pad:28, baseY:2,  sbLen:66, contentH:82 },
-  { id:87,  name:'LC-39A', loc:'KENNEDY · FH PAD',  fam:'falcon',   site:'39A', fh:true, pad:40, baseY:10, sbLen:74, contentH:116 },
+  { id:87,  name:'LC-39A', loc:'KENNEDY · FH PAD',  fam:'falcon',   site:'39A', fh:true, pad:44, baseY:20, sbLen:84, contentH:134 },
   { id:80,  name:'SLC-40', loc:'CAPE CANAVERAL',    fam:'falcon',   site:'40',    pad:28, baseY:2,  sbLen:66, contentH:96 },
   { id:188, name:'PAD 1',  loc:'STARBASE · OLM-A',  fam:'starship', site:'pad1',  pad:34, baseY:20, olmH:20, towerH:146, towerBays:14, armLen:11,  contentH:150 },
   { id:235, name:'PAD 2',  loc:'STARBASE · OLM-B',  fam:'starship', site:'pad2',  pad:34, baseY:4,  olmH:4,  towerH:145, towerBays:14, armLen:8.5, contentH:150 },
