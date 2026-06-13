@@ -208,7 +208,7 @@ const PALETTES = {
     label:'#39ff7a', sub:'#1f6f43', go:'#39ff7a', hold:'#aaff66', clear:'#1f6f43', lift:'#7dff9e'
   }
 };
-let PAL = PALETTES.neon;
+let PAL = PALETTES.vtrue;
 
 /* --------------------------------------------------- geometry builders */
 // surface of revolution: profile = [[r,y],...]; seg radial
@@ -233,7 +233,7 @@ function merge(parts){
   return { verts, faces };
 }
 
-let SEG = 12;                       // radial detail (toggle)
+let SEG = 8;                        // radial detail (toggle)
 const MODELS = {};                  // built per detail level
 function buildModels(){
   const seg=SEG, M=PAL;
@@ -454,7 +454,9 @@ function cellRect(i){
 }
 
 /* -------------------------------------------------------- main loop */
-let CAM='orbit', PLUME='cone', t0=performance.now();
+let CAM='auto', PLUME='particles', t0=performance.now();
+const VIEWS=['orbit','fixed','front'];
+function pickView(){ return VIEWS[Math.floor(Math.random()*VIEWS.length)]; }  // current stays a candidate
 function frame(now){
   const tt=(now-t0)*0.06;
   const realNow=Date.now();
@@ -462,8 +464,13 @@ function frame(now){
   for (let i=0;i<6;i++){
     const p=PADS[i], rect=cellRect(i);
     updatePad(p, realNow);
-    const az = CAM==='front' ? 0 : CAM==='fixed' ? 0.62 : tt*0.0045 + i*1.0;
-    const el = CAM==='front' ? 0.12 : 0.30;
+    let view;
+    if (CAM==='auto'){
+      if (!p.viewNext || realNow>=p.viewNext){ p.view=pickView(); p.viewNext=realNow + 15000+Math.random()*15000; }
+      view=p.view;
+    } else view=CAM;
+    const az = view==='front' ? 0 : view==='fixed' ? 0.62 : tt*0.0015 + i*1.0;  // orbit at 1/3 speed
+    const el = view==='front' ? 0.12 : 0.30;
     setupCell(rect, p.contentH, az, el);
     ctx.save();
     ctx.beginPath(); ctx.rect(rect.x,rect.y,rect.w,rect.h); ctx.clip();
@@ -505,8 +512,8 @@ function syncBtns(){ for (const c of ctrls) for (const b of c.host.children)
 ctrl('gPal', [{label:'NEON',val:'neon'},{label:'TRUE',val:'vtrue'},{label:'CRT',val:'crt'}],
   { get:()=>PAL===PALETTES.neon?'neon':PAL===PALETTES.vtrue?'vtrue':'crt',
     set:v=>{ PAL=PALETTES[v]; } });
-ctrl('gCam', [{label:'ORBIT',val:'orbit'},{label:'FIXED',val:'fixed'},{label:'FRONT',val:'front'}],
-  { get:()=>CAM, set:v=>CAM=v });
+ctrl('gCam', [{label:'AUTO',val:'auto'},{label:'ORBIT',val:'orbit'},{label:'FIXED',val:'fixed'},{label:'FRONT',val:'front'}],
+  { get:()=>CAM, set:v=>{ CAM=v; if(v==='auto') for(const p of PADS) p.viewNext=0; } });
 ctrl('gPlume', [{label:'CONE',val:'cone'},{label:'PARTICLE',val:'particles'},{label:'SOLID',val:'solid'}],
   { get:()=>PLUME, set:v=>PLUME=v });
 ctrl('gDet', [{label:'LO',val:8},{label:'HI',val:14}],
@@ -569,7 +576,7 @@ function classify(L){
 addEventListener('keydown', e=>{
   const k=e.key.toLowerCase();
   if (k==='1') PAL=PALETTES.neon; else if (k==='2') PAL=PALETTES.vtrue; else if (k==='3') PAL=PALETTES.crt;
-  else if (k==='c') CAM = CAM==='orbit'?'fixed':CAM==='fixed'?'front':'orbit';
+  else if (k==='c') CAM = CAM==='auto'?'orbit':CAM==='orbit'?'fixed':CAM==='fixed'?'front':'auto';
   else if (k==='p') PLUME = PLUME==='cone'?'particles':PLUME==='particles'?'solid':'cone';
   else if (k==='l') launchNext();
   else if (k==='m'){ DATA = DATA==='mock'?'live':'mock'; if(DATA==='live') goLive(); else seedMock(Date.now()); }
