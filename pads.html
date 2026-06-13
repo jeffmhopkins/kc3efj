@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#050510">
+<title>PAD STATUS — SpaceX launch pads, low-poly neon</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#050510; }
+  #c { display:block; width:100vw; height:100vh; }
+  #panel {
+    position:fixed; left:14px; bottom:14px; z-index:10;
+    font:11px/1.5 'Courier New', ui-monospace, monospace;
+    color:#9adfe8; letter-spacing:.4px;
+    background:rgba(4,6,14,.80); border:1px solid rgba(94,242,255,.22);
+    border-radius:10px; padding:11px 13px 9px;
+    backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+    transition:opacity .5s; user-select:none; max-width:min(92vw,720px);
+  }
+  body.idle #panel { opacity:0; pointer-events:none; }
+  #panel .ttl { color:#5ef2ff; font-weight:bold; margin-bottom:7px; text-shadow:0 0 8px rgba(94,242,255,.6); }
+  #panel .ttl span { color:#4a6f7a; font-weight:normal; }
+  #panel .row { display:flex; flex-wrap:wrap; gap:14px; }
+  #panel .grp { margin:3px 0; }
+  #panel .lbl { color:#ff5ec8; font-size:9px; margin:0 0 3px; text-shadow:0 0 6px rgba(255,94,200,.5); }
+  #panel button {
+    font:10px 'Courier New', ui-monospace, monospace; letter-spacing:.4px;
+    color:#7ccfdd; background:transparent; cursor:pointer;
+    border:1px solid rgba(94,242,255,.28); border-radius:5px;
+    padding:4px 8px; margin:0 4px 3px 0;
+  }
+  #panel button:hover { border-color:#5ef2ff; color:#bdf6ff; }
+  #panel button.on {
+    color:#5ef2ff; border-color:#5ef2ff; background:rgba(14,43,51,.85);
+    text-shadow:0 0 6px rgba(94,242,255,.8);
+  }
+  #panel button.act { color:#ffd27c; border-color:rgba(255,210,124,.5); }
+  #panel button.act:hover { border-color:#ffd27c; color:#fff0d0; }
+  #panel .keys { color:#3c5a64; font-size:9px; margin-top:7px; border-top:1px solid rgba(94,242,255,.12); padding-top:6px; }
+  #note { color:#54808c; font-size:9px; margin-top:5px; min-height:11px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="panel">
+  <div class="ttl">PAD STATUS <span>// spacex launch pads — low-poly neon mockup</span></div>
+  <div class="row">
+    <div class="grp"><div class="lbl">PALETTE</div><div id="gPal"></div></div>
+    <div class="grp"><div class="lbl">CAMERA</div><div id="gCam"></div></div>
+    <div class="grp"><div class="lbl">PLUME</div><div id="gPlume"></div></div>
+    <div class="grp"><div class="lbl">DETAIL</div><div id="gDet"></div></div>
+    <div class="grp"><div class="lbl">DATA</div><div id="gData"></div></div>
+    <div class="grp"><div class="lbl">DEMO</div><div id="gDemo"></div></div>
+  </div>
+  <div id="note"></div>
+  <div class="keys">keys&nbsp; 1/2/3 palette &nbsp;·&nbsp; C camera &nbsp;·&nbsp; P plume &nbsp;·&nbsp; L launch next &nbsp;·&nbsp; M mock/live &nbsp;·&nbsp; H hide ui</div>
+</div>
+<script>
+"use strict";
+/* ===========================================================================
+   PAD STATUS — software 3D, dark neon, Star Fox / aquarium house style.
+   world verts -> per-cell orbit camera -> perspective -> painter sort,
+   flat-shaded fills + bright wireframe edges.  Six pads in a 2x3 grid:
+   top row Falcon (SLC-4E, LC-39A, SLC-40), bottom row Starship.
+   Real vehicle dimensions (m) drive proportions; one rocket per occupied pad,
+   countdown to T-0, ignition + liftoff at T-0.   [mock data by default]
+   =========================================================================== */
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha:false });
+let W=0, H=0, DPR=1;
+function resize(){
+  DPR = Math.min(1.75, window.devicePixelRatio||1);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.floor(W*DPR); canvas.height = Math.floor(H*DPR);
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', resize); resize();
+
+/* ----------------------------------------------------------------- math */
+const TAU = Math.PI*2;
+const rnd = (a=1,b)=> b===undefined ? Math.random()*a : a+Math.random()*(b-a);
+const clamp = (v,lo,hi)=> v<lo?lo : v>hi?hi : v;
+const lerp = (a,b,t)=> a+(b-a)*t;
+const norm3 = v=>{ const l=Math.hypot(v[0],v[1],v[2])||1; return [v[0]/l,v[1]/l,v[2]/l]; };
+const cross3 = (a,b)=>[a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const sub3 = (a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const LIGHT = norm3([0.38, 0.84, -0.4]);
+
+/* ----------------------------------------------------- camera + project */
+const cam = { pos:[0,10,-40], r:[1,0,0], u:[0,1,0], f:[0,0,1] };
+let VX=0, VY=0, FOC=600, FOGN=10, FOGF=300;
+function setupCell(rect, contentH, az, el){
+  const tgtY = contentH*0.40;
+  const dist = contentH*1.72;
+  const ey   = tgtY + contentH*(el ?? 0.30);
+  cam.pos = [Math.sin(az)*dist, ey, -Math.cos(az)*dist];
+  const tgt=[0,tgtY,0];
+  const f=norm3(sub3(tgt,cam.pos));
+  const r=norm3([-f[2],0,f[0]]);
+  cam.f=f; cam.r=r; cam.u=cross3(r,f);
+  VX = rect.x + rect.w*0.5;
+  VY = rect.y + rect.h*0.575;
+  FOC = rect.h*0.86 * dist / contentH;
+  FOGN = dist - contentH*0.9; FOGF = dist + contentH*1.1;
+}
+const fogAt = z => clamp(1-(z-FOGN)/(FOGF-FOGN), 0, 1)*0.85 + 0.15;
+function project(p, dy){
+  const px=p[0], py=p[1]+(dy||0), pz=p[2];
+  const dx=px-cam.pos[0], d1=py-cam.pos[1], dz=pz-cam.pos[2];
+  const z = dx*cam.f[0]+d1*cam.f[1]+dz*cam.f[2];
+  if (z < 0.5) return { vis:false };
+  const x = dx*cam.r[0]+d1*cam.r[1]+dz*cam.r[2];
+  const y = dx*cam.u[0]+d1*cam.u[1]+dz*cam.u[2];
+  const inv = FOC/z;
+  return { vis:true, x:VX+x*inv, y:VY-y*inv, z, inv };
+}
+
+/* ----------------------------------------------- render list + drawing */
+const RL = [];
+function pushFaces(verts, faces, dy){
+  const pj = new Array(verts.length);
+  for (const f of faces){
+    const idx=f.i; let ok=true;
+    for (const k of idx){ if (pj[k]===undefined) pj[k]=project(verts[k],dy); if(!pj[k].vis){ok=false;break;} }
+    if (!ok) continue;
+    const A=verts[idx[0]], B=verts[idx[1]], C=verts[idx[2]];
+    const n=norm3(cross3(sub3(B,A),sub3(C,A)));
+    let lum=Math.abs(n[0]*LIGHT[0]+n[1]*LIGHT[1]+n[2]*LIGHT[2]);
+    let depth=0; for (const k of idx) depth+=pj[k].z; depth/=idx.length;
+    const m=f.mat;
+    RL.push({ pts:idx.map(k=>pj[k]), depth,
+      h:m.h, s:m.s, l:clamp(m.l0 + lum*m.l1, 0, 94), eh:m.h, es:m.s, el:m.le,
+      a:fogAt(depth)*(m.a??1), eA:m.eA??0.85 });
+  }
+}
+function line3(p, q, m, dy, w){
+  const A=project(p,dy), B=project(q,dy);
+  if (!A.vis || !B.vis) return;
+  const depth=(A.z+B.z)/2;
+  RL.push({ line:true, x1:A.x, y1:A.y, x2:B.x, y2:B.y, depth,
+    h:m.h, s:m.s, l:m.le, a:fogAt(depth)*(m.a??1), w:w??1.2 });
+}
+function spark(p, r, m, dy){
+  const P=project(p,dy); if(!P.vis) return;
+  RL.push({ point:true, x:P.x, y:P.y, r:Math.max(1.1, r*P.inv), depth:P.z-0.01,
+    h:m.h, s:m.s, l:m.le, a:fogAt(P.z)*(m.a??1) });
+}
+function flush(){
+  RL.sort((a,b)=> b.depth-a.depth);
+  ctx.lineJoin='round'; ctx.lineCap='round';
+  for (const f of RL){
+    if (f.line){
+      ctx.strokeStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a})`;
+      ctx.lineWidth=f.w; ctx.beginPath(); ctx.moveTo(f.x1,f.y1); ctx.lineTo(f.x2,f.y2); ctx.stroke();
+      continue;
+    }
+    if (f.point){
+      ctx.save(); ctx.globalCompositeOperation='lighter';
+      ctx.fillStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a*0.3})`;
+      ctx.beginPath(); ctx.arc(f.x,f.y,f.r*3,0,TAU); ctx.fill();
+      ctx.fillStyle=`hsla(${f.h},${f.s}%,${Math.min(96,f.l+18)}%,${f.a})`;
+      ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,TAU); ctx.fill();
+      ctx.restore(); continue;
+    }
+    ctx.beginPath(); ctx.moveTo(f.pts[0].x, f.pts[0].y);
+    for (let k=1;k<f.pts.length;k++) ctx.lineTo(f.pts[k].x, f.pts[k].y);
+    ctx.closePath();
+    ctx.fillStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a*0.92})`; ctx.fill();
+    ctx.strokeStyle=`hsla(${f.eh},${f.es}%,${f.el}%,${f.a*f.eA})`;
+    ctx.lineWidth=1; ctx.stroke();
+  }
+  RL.length=0;
+}
+
+/* --------------------------------------------------------- palettes */
+// material -> {h,s,l0,l1,le(edge L),a}
+const PALETTES = {
+  neon: {
+    falconBody:{h:198,s:18,l0:20,l1:26,le:64}, dragon:{h:190,s:20,l0:34,l1:30,le:82},
+    booster:{h:205,s:14,l0:18,l1:24,le:60}, shipSteel:{h:200,s:12,l0:26,l1:28,le:72},
+    shipNose:{h:200,s:12,l0:30,l1:28,le:80}, flap:{h:300,s:60,l0:24,l1:24,le:74},
+    fin:{h:300,s:55,l0:26,l1:22,le:72},
+    towerF:{h:188,s:70,l0:0,l1:0,le:50}, towerS:{h:188,s:70,l0:0,l1:0,le:54},
+    pad:{h:188,s:65,l0:0,l1:0,le:34}, deck:{h:300,s:60,l0:0,l1:0,le:40},
+    plume:{h:312,s:90,l0:0,l1:0,le:66}, plumeHot:{h:38,s:95,l0:0,l1:0,le:70},
+    label:'#5ef2ff', sub:'#4a6f7a', go:'#5effa6', hold:'#ffd27c', clear:'#54808c', lift:'#ff5ec8'
+  },
+  vtrue: {
+    falconBody:{h:210,s:8,l0:30,l1:34,le:88}, dragon:{h:210,s:6,l0:40,l1:34,le:94},
+    booster:{h:210,s:8,l0:26,l1:30,le:78}, shipSteel:{h:210,s:9,l0:30,l1:34,le:84},
+    shipNose:{h:30,s:30,l0:32,l1:30,le:78}, flap:{h:24,s:40,l0:24,l1:26,le:70},
+    fin:{h:210,s:8,l0:24,l1:24,le:70},
+    towerF:{h:200,s:50,l0:0,l1:0,le:52}, towerS:{h:30,s:55,l0:0,l1:0,le:56},
+    pad:{h:200,s:30,l0:0,l1:0,le:36}, deck:{h:30,s:40,l0:0,l1:0,le:44},
+    plume:{h:30,s:96,l0:0,l1:0,le:70}, plumeHot:{h:48,s:96,l0:0,l1:0,le:82},
+    label:'#add6ff', sub:'#5a6f82', go:'#7effb0', hold:'#ffce7a', clear:'#5a6f82', lift:'#ff9a3c'
+  },
+  crt: {
+    falconBody:{h:140,s:80,l0:14,l1:30,le:60}, dragon:{h:140,s:80,l0:22,l1:32,le:78},
+    booster:{h:140,s:80,l0:12,l1:28,le:56}, shipSteel:{h:140,s:80,l0:16,l1:30,le:64},
+    shipNose:{h:140,s:80,l0:20,l1:30,le:74}, flap:{h:140,s:90,l0:18,l1:26,le:70},
+    fin:{h:140,s:90,l0:18,l1:24,le:68},
+    towerF:{h:140,s:90,l0:0,l1:0,le:46}, towerS:{h:140,s:90,l0:0,l1:0,le:50},
+    pad:{h:140,s:90,l0:0,l1:0,le:30}, deck:{h:140,s:90,l0:0,l1:0,le:38},
+    plume:{h:150,s:95,l0:0,l1:0,le:72}, plumeHot:{h:90,s:95,l0:0,l1:0,le:80},
+    label:'#39ff7a', sub:'#1f6f43', go:'#39ff7a', hold:'#aaff66', clear:'#1f6f43', lift:'#7dff9e'
+  }
+};
+let PAL = PALETTES.neon;
+
+/* --------------------------------------------------- geometry builders */
+// surface of revolution: profile = [[r,y],...]; seg radial
+function lathe(profile, seg, mat){
+  const verts=[], faces=[], rings=[];
+  for (const [r,y] of profile){
+    const ring=[];
+    for (let j=0;j<seg;j++){ const a=j/seg*TAU; verts.push([Math.cos(a)*r,y,Math.sin(a)*r]); ring.push(verts.length-1); }
+    rings.push(ring);
+  }
+  for (let i=0;i<rings.length-1;i++)
+    for (let j=0;j<seg;j++){ const k=(j+1)%seg;
+      faces.push({ i:[rings[i][j],rings[i][k],rings[i+1][k],rings[i+1][j]], mat }); }
+  return { verts, faces };
+}
+// flat quad panel from 4 points
+function panel(a,b,c,d,mat){ return { verts:[a,b,c,d], faces:[{i:[0,1,2,3],mat}] }; }
+function merge(parts){
+  const verts=[], faces=[];
+  for (const p of parts){ const off=verts.length; for (const v of p.verts) verts.push(v);
+    for (const f of p.faces) faces.push({ i:f.i.map(k=>k+off), mat:f.mat }); }
+  return { verts, faces };
+}
+
+let SEG = 12;                       // radial detail (toggle)
+const MODELS = {};                  // built per detail level
+function buildModels(){
+  const seg=SEG, M=PAL;
+  // --- Falcon 9 + fairing : 70 m, body Ø3.7 (r1.85), fairing Ø5.2 (r2.6)
+  MODELS.f9fairing = (()=>{
+    const body = lathe([[1.85,0],[1.85,1.5],[1.85,40],[1.74,42.5],[1.85,45],[1.85,57.5],
+      [2.6,60.8],[2.6,66],[1.5,68.6],[0.05,70]], seg, M.falconBody);
+    const fins=[]; for (let k=0;k<4;k++){ const a=k/4*TAU; const cx=Math.cos(a),sz=Math.sin(a);
+      fins.push(panel([cx*1.85,40.5,sz*1.85],[cx*3.1,41.5,sz*3.1],[cx*3.1,39.3,sz*3.1],[cx*1.85,38.6,sz*1.85],M.fin)); }
+    return merge([body,...fins]);
+  })();
+  // --- Falcon 9 + Dragon : ~63 m, capsule Ø4 (r2.0)
+  MODELS.f9dragon = (()=>{
+    const stack = lathe([[1.85,0],[1.85,1.5],[1.85,40],[1.74,42.5],[1.85,45],[1.85,55]], seg, M.falconBody);
+    const drag  = lathe([[1.95,55],[1.95,58.6],[2.0,58.8],[1.9,59.2],[1.35,61.6],[0.55,63.3]], seg, M.dragon);
+    const fins=[]; for (let k=0;k<4;k++){ const a=k/4*TAU; const cx=Math.cos(a),sz=Math.sin(a);
+      fins.push(panel([cx*1.85,40.5,sz*1.85],[cx*3.1,41.5,sz*3.1],[cx*3.1,39.3,sz*3.1],[cx*1.85,38.6,sz*1.85],M.fin)); }
+    return merge([stack,drag,...fins]);
+  })();
+  // --- Super Heavy booster only : 71 m, Ø9 (r4.5)
+  MODELS.booster = (()=>{
+    const body = lathe([[4.5,0],[4.5,3],[4.5,66],[4.5,69],[4.2,71]], seg, M.booster);
+    const fins=[]; for (let k=0;k<4;k++){ const a=k/4*TAU+0.4; const cx=Math.cos(a),sz=Math.sin(a);
+      fins.push(panel([cx*4.5,63,sz*4.5],[cx*6.6,64.5,sz*6.6],[cx*6.6,61,sz*6.6],[cx*4.5,59.5,sz*4.5],M.fin)); }
+    return merge([body,...fins]);
+  })();
+  // --- Starship stacked : ~123 m total (SH 0..71, ship 73..123, Ø9)
+  MODELS.shipStacked = (()=>{
+    const sh   = lathe([[4.5,0],[4.5,3],[4.5,66],[4.5,69],[4.3,71]], seg, M.booster);
+    const ship = lathe([[4.4,73],[4.5,75],[4.5,104],[4.35,108],[3.0,116],[1.4,120.5],[0.05,123]], seg, M.shipSteel);
+    const nose = lathe([[3.0,116],[1.4,120.5],[0.05,123]], seg, M.shipNose);
+    const parts=[sh,ship,nose];
+    // aft flaps (2) ~ y78, forward flaps (2) ~ y110
+    for (const [yy,rr,ln] of [[78,4.5,7],[110,4.5,6]])
+      for (const s of [1,-1]){ const a= s>0?0:Math.PI; const cx=Math.cos(a),sz=Math.sin(a);
+        parts.push(panel([cx*rr,yy,sz*rr],[cx*(rr+3.0),yy+1.5,sz*(rr+3.0)],
+          [cx*(rr+3.0),yy+1.5+ln,sz*(rr+3.0)],[cx*rr,yy+ln+2,sz*rr], M.flap)); }
+    return merge(parts);
+  })();
+}
+
+/* ------------------------------------------------------ towers + pads */
+// lattice tower drawn as edges (legs + rungs + braces), optional arms
+function drawTower(cx, cz, w, h, bays, mat, arms, retract){
+  const hw=w/2, dy=h/bays;
+  const corners=[[cx-hw,cz-hw],[cx+hw,cz-hw],[cx+hw,cz+hw],[cx-hw,cz+hw]];
+  for (const [x,z] of corners) line3([x,0,z],[x,h,z], mat, 0, 1.3);
+  for (let b=0;b<=bays;b++){ const y=b*dy;
+    for (let k=0;k<4;k++){ const a=corners[k], c=corners[(k+1)%4];
+      line3([a[0],y,a[1]],[c[0],y,c[1]], mat, 0, 1); } }
+  for (let b=0;b<bays;b++){ const y0=b*dy, y1=(b+1)*dy; const a=corners[0], c=corners[1];
+    if (b%2===0) line3([a[0],y0,a[1]],[c[0],y1,c[1]], mat, 0, .8);
+    else         line3([a[0],y1,a[1]],[c[0],y0,c[1]], mat, 0, .8);
+    const d=corners[3], e=corners[2];
+    if (b%2===0) line3([d[0],y0,d[1]],[e[0],y1,e[1]], mat, 0, .8);
+    else         line3([d[0],y1,d[1]],[e[0],y0,e[1]], mat, 0, .8);
+  }
+  if (arms) for (const arm of arms){
+    const y=arm.y, reach=arm.reach*(1-(retract||0)*0.55), open=(retract||0)*arm.open;
+    // two cantilever arms reaching toward pad center (-x side), spreading when retracted
+    for (const s of [1,-1]){
+      const z0=cz + s*(hw*0.5+open), z1=cz + s*(hw*0.3);
+      line3([cx-hw,y,z0],[cx-reach,y,z1], mat, 0, 1.4);
+      line3([cx-hw,y+arm.t,z0],[cx-reach,y+arm.t,z1], mat, 0, 1.1);
+      line3([cx-reach,y,z1],[cx-reach,y+arm.t,z1], mat, 0, 1);
+    }
+  }
+}
+// ground deck: square + grid + flame slot, edges only
+function drawPad(size, mat, deckMat){
+  const h=size/2;
+  for (const seq of [[[-h,0,-h],[h,0,-h]],[[h,0,-h],[h,0,h]],[[h,0,h],[-h,0,h]],[[-h,0,h],[-h,0,-h]]])
+    line3(seq[0],seq[1], mat, 0, 1.1);
+  const n=4; for (let i=1;i<n;i++){ const t=-h+size*i/n;
+    line3([t,0,-h],[t,0,h], mat, 0, .55); line3([-h,0,t],[h,0,t], mat, 0, .55); }
+  // launch mount square
+  const m=size*0.16;
+  for (const seq of [[[-m,.4,-m],[m,.4,-m]],[[m,.4,-m],[m,.4,m]],[[m,.4,m],[-m,.4,m]],[[-m,.4,m],[-m,.4,-m]]])
+    line3(seq[0],seq[1], deckMat, 0, 1.2);
+}
+
+/* --------------------------------------------------------- pad config */
+// grid order: row0 falcon, row1 starship
+const PADS = [
+  { id:16,  name:'SLC-4E',  loc:'VANDENBERG',  fam:'falcon',   tower:{w:7,h:62,bays:9},  pad:18, contentH:78 },
+  { id:87,  name:'LC-39A',  loc:'KENNEDY',     fam:'falcon',   tower:{w:9,h:80,bays:11, fss:true}, pad:22, contentH:92 },
+  { id:80,  name:'SLC-40',  loc:'CAPE CANAVERAL', fam:'falcon',tower:{w:7,h:60,bays:9},  pad:18, contentH:78 },
+  { id:188, name:'PAD 1',   loc:'STARBASE · OLM-A', fam:'starship', tower:{w:13,h:146,bays:16, arms:true}, pad:34, contentH:150 },
+  { id:235, name:'PAD 2',   loc:'STARBASE · OLM-B', fam:'starship', tower:{w:13,h:150,bays:16, arms:true}, pad:34, contentH:154 },
+  { id:203, name:'39A SS',  loc:'KENNEDY · STARSHIP', fam:'starship', tower:{w:13,h:96,bays:11, arms:true, wip:true}, pad:34, contentH:150 },
+];
+// mock scenarios — seeded relative to load time so every state shows at once
+function seedMock(now){
+  const H=3600e3, MI=60e3;
+  const set=(p,veh,t,st)=>{ p.veh=veh; p.net=t==null?null:now+t; p.status=st; p.phase='idle'; p.y=0; p.gone=false; p.recycled=false; };
+  set(PADS[0],'f9fairing', 3*H+12*MI+40e3, 'GO');      // counting, hours out
+  set(PADS[1], null,        null,            'CLEAR');   // empty pad
+  set(PADS[2],'f9dragon',   18e3,            'GO');      // T-18s -> liftoff in view
+  set(PADS[3],'shipStacked',8*MI+30e3,       'GO');      // stacked, ~8 min
+  set(PADS[4],'booster',    1*H+45*MI,       'TBC');     // booster only, hold/tbc
+  set(PADS[5], null,        null,            'WIP');      // tower under construction
+}
+
+/* ----------------------------------------------------- state + render */
+const WINDOW_MS = 6*3600e3;          // show a rocket if launch within this window
+const ASCENT = 5.2;                  // visual liftoff accel (m/s^2-ish)
+let DATA='mock';
+
+function updatePad(p, now){
+  if (p.net==null){ p.phase='empty'; return; }
+  const T=(p.net-now)/1000;          // seconds to T-0 (neg after)
+  if (DATA==='live' && T>WINDOW_MS/1000){ p.phase='empty'; return; }
+  p.T=T;
+  if (T>0){ p.phase = T<60 ? 'terminal' : 'count'; p.y=0; p.retract = T<60 ? clamp((60-T)/55,0,1) : 0; }
+  else {
+    const dt=-T;                     // seconds since liftoff
+    p.y = ASCENT*dt*dt;              // accelerating climb
+    p.phase = (p.y > p.contentH*1.5) ? 'gone' : 'liftoff';
+    p.retract=1;
+    if (p.phase==='gone' && !p.recycled && DATA==='mock'){ p.recycled=true;
+      setTimeout(()=>{ p.net = Date.now() + (40+rnd(60))*1000; p.recycled=false; p.gone=false; }, 4200); }
+  }
+}
+
+function drawRocket(p, t){
+  const m=MODELS[p.veh]; if(!m) return;
+  pushFaces(m.verts, m.faces, p.y);
+  if (p.phase==='liftoff' || (p.phase==='terminal' && p.T<3)){
+    drawPlume(p, t);
+  }
+}
+function drawPlume(p, t){
+  const r = p.fam==='starship'?4.0:1.7;
+  const len = p.fam==='starship'?34:20;
+  const mode = PLUME;
+  const hot=PAL.plumeHot, soft=PAL.plume;
+  const intensity = p.phase==='liftoff'?1:0.4;
+  if (mode==='solid'){
+    const seg=Math.max(6,SEG); const tip=[0,p.y-len*intensity,0];
+    for (let j=0;j<seg;j++){ const a=j/seg*TAU,b=(j+1)/seg*TAU;
+      const m=(j%2)?hot:soft;
+      RL_pushTri([Math.cos(a)*r,p.y+0.3,Math.sin(a)*r],[Math.cos(b)*r,p.y+0.3,Math.sin(b)*r],tip,m); }
+  } else if (mode==='particles'){
+    const n=Math.floor(26*intensity);
+    for (let i=0;i<n;i++){ const a=rnd(TAU), rr=rnd(r*1.1); const dd=rnd(len*intensity);
+      spark([Math.cos(a)*rr*(1+dd*0.04), p.y-dd, Math.sin(a)*rr*(1+dd*0.04)], rr<r*0.4?1.1:0.7, dd<len*0.3?hot:soft, 0); }
+  } else { // cone (default) — flickering streaks + glow core
+    const fl=0.7+0.3*Math.sin(t*0.05+p.id);
+    const n=Math.max(7,SEG);
+    for (let j=0;j<n;j++){ const a=j/n*TAU; const rr=r*(0.4+0.6*Math.random());
+      line3([Math.cos(a)*rr,p.y+0.4,Math.sin(a)*rr],[Math.cos(a)*rr*0.2,p.y-len*intensity*fl*(0.7+0.5*Math.random()),Math.sin(a)*rr*0.2], j%3?soft:hot, 0, 1.4); }
+    spark([0,p.y-len*0.25*intensity,0], r*1.4, hot, 0);
+  }
+}
+function RL_pushTri(a,b,c,m){
+  const A=project(a,0),B=project(b,0),C=project(c,0);
+  if(!A.vis||!B.vis||!C.vis) return;
+  RL.push({ pts:[A,B,C], depth:(A.z+B.z+C.z)/3, h:m.h,s:m.s,l:m.le,eh:m.h,es:m.s,el:Math.min(95,m.le+12),
+    a:0.5, eA:0.6 });
+}
+
+/* ---------------------------------------------------------- 2D HUD */
+function drawCellHUD(rect, p, now){
+  const pad=10;
+  ctx.save();
+  // frame
+  ctx.strokeStyle='rgba(94,242,255,0.10)'; ctx.lineWidth=1;
+  ctx.strokeRect(rect.x+0.5, rect.y+0.5, rect.w-1, rect.h-1);
+  // label
+  ctx.textBaseline='top';
+  ctx.font="bold 15px 'Courier New', monospace";
+  ctx.fillStyle=PAL.label; ctx.shadowColor=PAL.label; ctx.shadowBlur=8;
+  ctx.fillText(p.name, rect.x+pad, rect.y+pad);
+  ctx.shadowBlur=0;
+  ctx.font="9px 'Courier New', monospace"; ctx.fillStyle=PAL.sub;
+  ctx.fillText(p.loc, rect.x+pad, rect.y+pad+17);
+  ctx.font="9px 'Courier New', monospace"; ctx.fillStyle=PAL.sub; ctx.textAlign='right';
+  ctx.fillText('PAD '+p.id, rect.x+rect.w-pad, rect.y+pad);
+  ctx.textAlign='left';
+  // status + T-time bottom
+  let stTxt, stCol, tTxt='';
+  if (p.phase==='empty'){
+    if (p.status==='WIP'){ stTxt='● TOWER WIP'; stCol=PAL.hold; tTxt='NO FLIGHT'; }
+    else { stTxt='○ PAD CLEAR'; stCol=PAL.clear; tTxt='—'; }
+  } else if (p.phase==='liftoff' || p.phase==='gone'){
+    stTxt='▲ LIFTOFF'; stCol=PAL.lift; tTxt = 'T+'+fmtT(Math.max(0,-p.T));
+  } else {
+    const go = p.status==='GO';
+    stTxt = (go?'● GO FOR LAUNCH':'◐ '+(p.status==='TBC'?'TO BE CONFIRMED':p.status));
+    stCol = go?PAL.go:PAL.hold;
+    tTxt = 'T-'+fmtT(p.T);
+    if (p.phase==='terminal') stTxt='◉ TERMINAL COUNT', stCol=PAL.go;
+  }
+  ctx.font="11px 'Courier New', monospace"; ctx.fillStyle=stCol;
+  ctx.shadowColor=stCol; ctx.shadowBlur=6;
+  ctx.fillText(stTxt, rect.x+pad, rect.y+rect.h-pad-30);
+  ctx.shadowBlur=0;
+  ctx.font="bold 22px 'Courier New', monospace"; ctx.fillStyle=tTxt.startsWith('T+')?PAL.lift:PAL.label;
+  ctx.fillText(tTxt, rect.x+pad, rect.y+rect.h-pad-22);
+  // vehicle tag
+  if (p.veh && p.phase!=='empty'){
+    ctx.font="9px 'Courier New', monospace"; ctx.fillStyle=PAL.sub; ctx.textAlign='right';
+    ctx.fillText(VEH_LABEL[p.veh], rect.x+rect.w-pad, rect.y+rect.h-pad-12);
+    ctx.textAlign='left';
+  }
+  ctx.restore();
+}
+const VEH_LABEL={ f9fairing:'FALCON 9 · FAIRING', f9dragon:'FALCON 9 · DRAGON', booster:'SUPER HEAVY', shipStacked:'STARSHIP · STACKED' };
+function fmtT(s){ s=Math.max(0,Math.floor(s)); const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;
+  return (h?String(h).padStart(2,'0')+':':'')+String(m).padStart(2,'0')+':'+String(x).padStart(2,'0'); }
+
+/* ----------------------------------------------------------- layout */
+function cellRect(i){
+  const col=i%3, row=Math.floor(i/3);
+  const gx=2, gy=2;
+  const cw=(W-gx*4)/3, ch=(H-gy*3)/2;
+  return { x:gx+col*(cw+gx), y:gy+row*(ch+gy), w:cw, h:ch };
+}
+
+/* -------------------------------------------------------- main loop */
+let CAM='orbit', PLUME='cone', t0=performance.now();
+function frame(now){
+  const tt=(now-t0)*0.06;
+  const realNow=Date.now();
+  ctx.fillStyle='#050510'; ctx.fillRect(0,0,W,H);
+  for (let i=0;i<6;i++){
+    const p=PADS[i], rect=cellRect(i);
+    updatePad(p, realNow);
+    const az = CAM==='front' ? 0 : CAM==='fixed' ? 0.62 : tt*0.0045 + i*1.0;
+    const el = CAM==='front' ? 0.12 : 0.30;
+    setupCell(rect, p.contentH, az, el);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(rect.x,rect.y,rect.w,rect.h); ctx.clip();
+    // floor + pad + tower
+    const dm = p.fam==='starship'?PAL.towerS:PAL.towerF;
+    drawPad(p.pad, PAL.pad, PAL.deck);
+    const tw=p.tower;
+    const arms = tw.arms ? [{y:tw.h*0.42, reach:p.pad*0.62, t:6, open:6},{y:tw.h*0.66, reach:p.pad*0.55, t:6, open:6}] : null;
+    drawTower(p.pad*0.5+ (p.fam==='starship'?tw.w*0.55:3.2), 0, tw.w, tw.h, tw.bays, dm, arms, p.veh?p.retract:0);
+    // rocket
+    if (p.veh && p.phase!=='empty') drawRocket(p, now);
+    flush();
+    ctx.restore();
+    drawCellHUD(rect, p, realNow);
+  }
+  // global CRT vignette + scanlines
+  ctx.save();
+  const g=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*0.32,W/2,H/2,Math.max(W,H)*0.72);
+  g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(0,0,6,0.5)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  ctx.globalAlpha=0.05; ctx.fillStyle='#000';
+  for (let y=0;y<H;y+=3) ctx.fillRect(0,y,W,1);
+  ctx.restore();
+  requestAnimationFrame(frame);
+}
+
+/* --------------------------------------------------------- controls */
+function mkBtns(host, opts, get, set){
+  host.innerHTML='';
+  for (const o of opts){ const b=document.createElement('button'); b.textContent=o.label;
+    b.onclick=()=>{ set(o.val); syncBtns(); }; b._val=o.val; host.appendChild(b); }
+}
+const ctrls=[];
+function ctrl(hostId, opts, getset){ const host=document.getElementById(hostId);
+  mkBtns(host, opts, getset.get, getset.set); ctrls.push({host, get:getset.get}); }
+function syncBtns(){ for (const c of ctrls) for (const b of c.host.children)
+  b.classList.toggle('on', b._val===c.get()); buildModels(); }
+
+ctrl('gPal', [{label:'NEON',val:'neon'},{label:'TRUE',val:'vtrue'},{label:'CRT',val:'crt'}],
+  { get:()=>PAL===PALETTES.neon?'neon':PAL===PALETTES.vtrue?'vtrue':'crt',
+    set:v=>{ PAL=PALETTES[v]; } });
+ctrl('gCam', [{label:'ORBIT',val:'orbit'},{label:'FIXED',val:'fixed'},{label:'FRONT',val:'front'}],
+  { get:()=>CAM, set:v=>CAM=v });
+ctrl('gPlume', [{label:'CONE',val:'cone'},{label:'PARTICLE',val:'particles'},{label:'SOLID',val:'solid'}],
+  { get:()=>PLUME, set:v=>PLUME=v });
+ctrl('gDet', [{label:'LO',val:8},{label:'HI',val:14}],
+  { get:()=>SEG, set:v=>{ SEG=v; } });
+ctrl('gData', [{label:'MOCK',val:'mock'},{label:'LIVE',val:'live'}],
+  { get:()=>DATA, set:v=>{ DATA=v; if(v==='live') goLive(); else { seedMock(Date.now()); note('mock data — every pad state shown at once.'); } } });
+
+const demo=document.getElementById('gDemo');
+const bL=document.createElement('button'); bL.textContent='▶ LAUNCH NEXT'; bL.className='act';
+bL.onclick=launchNext; demo.appendChild(bL);
+
+function launchNext(){
+  let best=null; for (const p of PADS) if (p.net && p.net>Date.now() && (!best||p.net<best.net)) best=p;
+  if (best) best.net = Date.now()+1500;
+}
+function note(s){ document.getElementById('note').textContent=s; }
+
+/* ------------------------------------------------------- live (LL2) */
+async function goLive(){
+  note('fetching live data from Launch Library 2 …');
+  try{
+    const cacheRaw=localStorage.getItem('padcache');
+    const cache=cacheRaw?JSON.parse(cacheRaw):null;
+    let data;
+    if (cache && Date.now()-cache.t < 5*60e3){ data=cache.d; }
+    else {
+      const r=await fetch('https://ll.thespacedevs.com/2.2.0/launch/upcoming/?lsp__id=121&limit=40&mode=detailed&hide_recent_previous=true&format=json');
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const j=await r.json(); data=j.results;
+      localStorage.setItem('padcache', JSON.stringify({t:Date.now(), d:data}));
+    }
+    applyLive(data); note('live · LL2 (cached 5m, ~15 req/hr free tier).');
+  }catch(e){ note('live fetch failed ('+e.message+') — staying on mock. rate-limited?'); DATA='mock'; seedMock(Date.now()); syncBtns(); }
+}
+function applyLive(results){
+  for (const p of PADS){ p.veh=null; p.net=null; p.status='CLEAR'; p.phase='empty'; p.y=0; }
+  const byPad={};
+  for (const L of results){ const pid=L.pad&&L.pad.id; if(pid==null) continue;
+    if(!byPad[pid] || new Date(L.net)<new Date(byPad[pid].net)) byPad[pid]=L; }
+  for (const p of PADS){ const L=byPad[p.id]; if(!L) continue;
+    p.net=new Date(L.net).getTime(); p.veh=classify(L);
+    const ab=(L.status&&L.status.abbrev)||''; p.status = ab==='Go'?'GO':ab==='TBC'?'TBC':(ab||'TBD').toUpperCase();
+  }
+  // starship 39A tower still WIP if nothing manifested
+  if (!byPad[203]) PADS[5].status='WIP';
+}
+function classify(L){
+  const cfg=((L.rocket&&L.rocket.configuration)||{});
+  const fam=(cfg.name||cfg.full_name||'').toLowerCase();
+  const mis=((L.mission&&L.mission.name)||L.name||'').toLowerCase();
+  if (fam.includes('starship')||fam.includes('super heavy')){
+    return (mis.includes('booster')||mis.includes('static')) ? 'booster' : 'shipStacked';
+  }
+  if (mis.includes('dragon')||mis.includes('crew')||mis.includes('crs')||mis.includes('cargo')||mis.includes('axiom')||mis.includes('polaris'))
+    return 'f9dragon';
+  return 'f9fairing';
+}
+
+/* --------------------------------------------------------- keys/idle */
+addEventListener('keydown', e=>{
+  const k=e.key.toLowerCase();
+  if (k==='1') PAL=PALETTES.neon; else if (k==='2') PAL=PALETTES.vtrue; else if (k==='3') PAL=PALETTES.crt;
+  else if (k==='c') CAM = CAM==='orbit'?'fixed':CAM==='fixed'?'front':'orbit';
+  else if (k==='p') PLUME = PLUME==='cone'?'particles':PLUME==='particles'?'solid':'cone';
+  else if (k==='l') launchNext();
+  else if (k==='m'){ DATA = DATA==='mock'?'live':'mock'; if(DATA==='live') goLive(); else seedMock(Date.now()); }
+  else if (k==='h') document.body.classList.toggle('uihide');
+  syncBtns();
+});
+const sCss=document.createElement('style'); sCss.textContent='body.uihide #panel{display:none}'; document.head.appendChild(sCss);
+let idleT; function poke(){ document.body.classList.remove('idle'); clearTimeout(idleT); idleT=setTimeout(()=>document.body.classList.add('idle'),4000); }
+addEventListener('mousemove',poke); addEventListener('touchstart',poke,{passive:true}); poke();
+
+/* --------------------------------------------------------------- go */
+buildModels(); seedMock(Date.now()); syncBtns();
+note('mock data — every pad state shown at once. SLC-40 lifts off in ~18s. ▶ LAUNCH NEXT to force one.');
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
