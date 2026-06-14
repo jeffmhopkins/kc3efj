@@ -708,7 +708,8 @@ const LIFE = [
     return { pos:[pos[0],pos[1],pos[2]], vel:[1,0,0], yaw:0,pitch:0,roll:0,
       ph:0, wf:2.4, wa:0.5, u:0, state:'patrol', timer:rnd(7,12), target:null, tgtTimer:6,
       lunge:0, eaten:0, quota:10, hueIdx,
-      form:SHARK_FORMS[(Math.random()*SHARK_FORMS.length)|0], hj:rnd(-30,30) };
+      form:SHARK_FORMS[(Math.random()*SHARK_FORMS.length)|0], hj:rnd(-30,30),
+      belly: Math.random()<0.5 ? rnd(25,70)*(Math.random()<0.5?-1:1) : 0 };  // some are dual-tone
   },
   // an intruder shark enters from off-screen, in a hue distinct from the resident
   spawnRival(){
@@ -1120,15 +1121,18 @@ const LIFE = [
     const shHue=mod(PAL.h[sh.hueIdx]+sh.hj,360);
     const pul = Math.sin(t*7)*0.5+0.5;
     const sHue = hunt ? lerpHue(shHue, 5, 0.25+pul*0.35) : shHue;   // flush toward red on the pulse
+    const sst={ h:sHue, s:hunt?(80+pul*15):55, l0:hunt?(16+pul*24):13, l1:hunt?34:26, a:a, edge:32, edgeA:hunt?(0.7+pul*0.3):0.8 };
+    if (sh.belly){ const belH=mod(sHue+sh.belly,360); sst.hOf=f=> f.belly?belH:sHue; }
     gatherFaces(transformPts(fishVerts(sh,t,sh.form), sh.pos, sh.yaw, sh.pitch, sh.roll,
-      [1.5,1.7,3.1]), sh.form.f,
-      { h:sHue, s:hunt?(80+pul*15):55, l0:hunt?(16+pul*24):13, l1:hunt?34:26, a:a, edge:32, edgeA:hunt?(0.7+pul*0.3):0.8 });
+      [1.5,1.7,3.1]), sh.form.f, sst);
     if (this.rival){
       const rv=this.rival, rvHue=mod(PAL.h[rv.hueIdx]+rv.hj,360);
       const rp=Math.sin(t*7+1.6)*0.5+0.5;                          // intruder pulses aggressively too
+      const rHue=lerpHue(rvHue,5,0.2+rp*0.3);
+      const rst={ h:rHue, s:82, l0:24+rp*18, l1:38, a:a, edge:34, edgeA:1 };
+      if (rv.belly){ const belH=mod(rHue+rv.belly,360); rst.hOf=f=> f.belly?belH:rHue; }
       gatherFaces(transformPts(fishVerts(rv,t,rv.form), rv.pos, rv.yaw, rv.pitch, rv.roll,
-        [1.55,1.75,3.2]), rv.form.f,
-        { h:lerpHue(rvHue,5,0.2+rp*0.3), s:82, l0:24+rp*18, l1:38, a:a, edge:34, edgeA:1 });
+        [1.55,1.75,3.2]), rv.form.f, rst);
     }
   }
 },
