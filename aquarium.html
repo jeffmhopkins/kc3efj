@@ -673,7 +673,7 @@ const LIFE = [
     const n=3+(Math.random()*3|0);
     for (let i=0;i<n;i++) this.foods.push({
       pos:[rnd(-BND.x*0.6,BND.x*0.6), rnd(11,14), rnd(-BND.z*0.6,BND.z*0.6)], // upper water, in view
-      vel:[rnd(-0.2,0.2), -rnd(0.4,0.8), rnd(-0.2,0.2)],
+      vel:[rnd(-0.2,0.2), -rnd(0.13,0.27), rnd(-0.2,0.2)],   // slow drift down (1/3 speed)
       size:rnd(0.9,1.6), biteCd:0, life:rnd(45,75), ang:rnd(TAU), spin:rnd(-2,2),
       hue:mod(38+rnd(-12,12),360)                      // amber/green food
     });
@@ -804,7 +804,7 @@ const LIFE = [
   spawnChomp(pos, size){
     const parts=[], n=10+(Math.random()*7|0);
     for (let i=0;i<n;i++){
-      const d=norm3([rnd(-1,1),rnd(-1,1),rnd(-1,1)]), sp=rnd(2,5.5);
+      const d=norm3([rnd(-1,1),rnd(-1,1),rnd(-1,1)]), sp=rnd(1,2.75);
       parts.push({ p:[pos[0],pos[1],pos[2]], v:[d[0]*sp,d[1]*sp,d[2]*sp] });
     }
     this.chomps.push({ pos:[pos[0],pos[1],pos[2]], parts, age:0, life:0.85, size });
@@ -1003,7 +1003,7 @@ const LIFE = [
     for (let i=this.foods.length-1;i>=0;i--){
       const f=this.foods[i];
       f.biteCd-=dt; f.life-=dt;
-      f.vel[1]=Math.max(f.vel[1]-0.3*dt, -1.2); f.vel[0]*=0.98; f.vel[2]*=0.98;
+      f.vel[1]=Math.max(f.vel[1]-0.1*dt, -0.4); f.vel[0]*=0.98; f.vel[2]*=0.98;
       f.pos[0]+=f.vel[0]*dt; f.pos[1]+=f.vel[1]*dt; f.pos[2]+=f.vel[2]*dt;
       f.ang+=f.spin*dt;
       if (f.pos[1]<=BND.y0+0.3){ f.pos[1]=BND.y0+0.3; f.vel[1]=0; f.vel[0]*=0.6; f.vel[2]*=0.6; }
@@ -1070,8 +1070,8 @@ const LIFE = [
     // eat bursts: scattering bits + an expanding shock ring
     for (const ch of this.chomps){
       const rp=ch.age/ch.life, k=(1-rp)*a;
-      for (const pt of ch.parts) point3(pt.p, 0.6*ch.size, PAL.h[1], 100, 72, k);
-      const rr=lerp(0.3, ch.size*5+3, rp), n2=18;
+      for (const pt of ch.parts) point3(pt.p, 0.3*ch.size, PAL.h[1], 100, 72, k);
+      const rr=lerp(0.15, ch.size*2.5+1.5, rp), n2=18;
       for (let s2=0;s2<n2;s2++){
         const a0=s2/n2*TAU, a1=(s2+1)/n2*TAU;
         line3([ch.pos[0]+Math.cos(a0)*rr, ch.pos[1], ch.pos[2]+Math.sin(a0)*rr],
