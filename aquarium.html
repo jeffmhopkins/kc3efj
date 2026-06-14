@@ -705,7 +705,7 @@ const LIFE = [
   // build a shark: random body form + random hue, given a palette hue slot
   makeSharkObj(pos, hueIdx){
     return { pos:[pos[0],pos[1],pos[2]], vel:[1,0,0], yaw:0,pitch:0,roll:0,
-      ph:0, wf:2.4, wa:0.5, u:0, state:'patrol', timer:rnd(7,12), target:null, tgtTimer:15,
+      ph:0, wf:2.4, wa:0.5, u:0, state:'patrol', timer:rnd(7,12), target:null, tgtTimer:6,
       lunge:0, eaten:0, quota:10, hueIdx,
       form:SHARK_FORMS[(Math.random()*SHARK_FORMS.length)|0], hj:rnd(-30,30) };
   },
@@ -846,11 +846,11 @@ const LIFE = [
       sacc[0]+=st[0]; sacc[1]+=st[1]; sacc[2]+=st[2];
       shTopSpeed=3.2; shMF=9; sh.wf=1.8; sh.wa=0.16;           // normal speed -50%, calm tail
       if (sh.timer<=0){ sh.state='hunt'; sh.eaten=0; sh.quota=10+(Math.random()*5|0);
-        sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=15; } // must eat ≥10 before satiated
+        sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=6; } // must eat ≥10 before satiated
     } else { // HUNT — lock a fish and run it down
-      if (!sh.target){ sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=15; }
+      if (!sh.target){ sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=6; }
       sh.tgtTimer-=dt;
-      if (sh.tgtTimer<=0){ sh.target=this.nearestBoid(sh.pos, sh.target); sh.tgtTimer=15; } // can't catch it — switch
+      if (sh.tgtTimer<=0){ sh.target=this.nearestBoid(sh.pos, sh.target); sh.tgtTimer=6; } // can't catch it — switch
       const tg=sh.target ? sh.target.pos : sh.pos;
       const st=steerTo([tg[0]-sh.pos[0],tg[1]-sh.pos[1],tg[2]-sh.pos[2]], sh.vel, 13, 22);
       sacc[0]+=st[0]*1.6; sacc[1]+=st[1]*1.6; sacc[2]+=st[2]*1.6;
@@ -868,7 +868,7 @@ const LIFE = [
         if (sh.eaten>=sh.quota){                                // full — long calm patrol ≥2 min
           sh.target=null; sh.state='patrol'; sh.timer=rnd(120,160);
           sh.u=Math.atan2(sh.pos[2]/7.5||0, 1);
-        } else { sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=15; } // still hungry — grab the next one
+        } else { sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=6; } // still hungry — grab the next one
       }
     }
     boundsForce(sh.pos, sacc, 4, 16);
