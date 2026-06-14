@@ -101,7 +101,7 @@ const OBSTACLES = [];
 /* --------------------------------------------------------------- camera */
 const cam = { pos:[0,10,-40], r:[1,0,0], u:[0,1,0], f:[0,0,1] };
 function updateCamera(t){
-  const ang = t*0.0125;
+  const ang = t*0.00625;   // half rotation speed
   const R = 40 + Math.sin(t*0.021)*4;
   cam.pos = [Math.sin(ang)*R, 10.5+Math.sin(t*0.033)*2.5, -Math.cos(ang)*R];
   const tgt = [0, 5.2, 0];
@@ -785,6 +785,24 @@ const LIFE = [
     }
     return best;
   },
+  // pick a fish about 1/3 of the way out to the farthest fish (not the absolute nearest)
+  pickTarget(p, not){
+    let maxd=0;
+    for (const o of this.boids){
+      if (o===not) continue;
+      const d=Math.hypot(o.pos[0]-p[0], o.pos[1]-p[1], o.pos[2]-p[2]);
+      if (d>maxd) maxd=d;
+    }
+    const want=maxd/3;
+    let best=null, bb=1e18;
+    for (const o of this.boids){
+      if (o===not) continue;
+      const d=Math.hypot(o.pos[0]-p[0], o.pos[1]-p[1], o.pos[2]-p[2]);
+      const diff=Math.abs(d-want);
+      if (diff<bb){ bb=diff; best=o; }
+    }
+    return best || this.nearestBoid(p, not);
+  },
   // replacement fish: spawn just beyond a wall (off-screen) and swim inward
   spawnBoid(r){
     const side=(Math.random()*4|0), M=BND.x+7, y=rnd(BND.y0+2,BND.y1-2);
@@ -847,11 +865,11 @@ const LIFE = [
       sacc[0]+=st[0]; sacc[1]+=st[1]; sacc[2]+=st[2];
       shTopSpeed=3.2; shMF=9; sh.wf=1.8; sh.wa=0.16;           // normal speed -50%, calm tail
       if (sh.timer<=0){ sh.state='hunt'; sh.eaten=0; sh.quota=10+(Math.random()*5|0);
-        sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=6; } // must eat ≥10 before satiated
+        sh.target=this.pickTarget(sh.pos); sh.tgtTimer=6; } // must eat ≥10 before satiated
     } else { // HUNT — lock a fish and run it down
-      if (!sh.target){ sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=6; }
+      if (!sh.target){ sh.target=this.pickTarget(sh.pos); sh.tgtTimer=6; }
       sh.tgtTimer-=dt;
-      if (sh.tgtTimer<=0){ sh.target=this.nearestBoid(sh.pos, sh.target); sh.tgtTimer=6; } // can't catch it — switch
+      if (sh.tgtTimer<=0){ sh.target=this.pickTarget(sh.pos, sh.target); sh.tgtTimer=6; } // can't catch it — switch
       const tg=sh.target ? sh.target.pos : sh.pos;
       const st=steerTo([tg[0]-sh.pos[0],tg[1]-sh.pos[1],tg[2]-sh.pos[2]], sh.vel, 13, 22);
       sacc[0]+=st[0]*1.6; sacc[1]+=st[1]*1.6; sacc[2]+=st[2]*1.6;
@@ -869,7 +887,7 @@ const LIFE = [
         if (sh.eaten>=sh.quota){                                // full — long calm patrol ≥2 min
           sh.target=null; sh.state='patrol'; sh.timer=rnd(120,160);
           sh.u=Math.atan2(sh.pos[2]/7.5||0, 1);
-        } else { sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=6; } // still hungry — grab the next one
+        } else { sh.target=this.pickTarget(sh.pos); sh.tgtTimer=6; } // still hungry — grab the next one
       }
     }
     boundsForce(sh.pos, sacc, 4, 16);
