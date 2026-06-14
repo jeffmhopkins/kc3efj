@@ -94,7 +94,7 @@ const FOG0 = 34, FOG1 = 95;
 const fogAt = z => clamp(1-(z-FOG0)/(FOG1-FOG0), 0, 1);
 
 // creatures swim inside this volume (fits every tank)
-const BND = { x:27, z:27, y0:2.5, y1:16 };
+const BND = { x:27, z:27, y0:1.2, y1:18.5 };
 
 /* --------------------------------------------------------------- camera */
 const cam = { pos:[0,10,-40], r:[1,0,0], u:[0,1,0], f:[0,0,1] };
@@ -650,14 +650,14 @@ const LIFE = [
       const tp=P(sh.u+0.35);                                   // chase a point ahead on the path
       const st=steerTo([tp[0]-sh.pos[0],tp[1]-sh.pos[1],tp[2]-sh.pos[2]], sh.vel, 3, 9);
       sacc[0]+=st[0]; sacc[1]+=st[1]; sacc[2]+=st[2];
-      shTopSpeed=3.2; shMF=9; sh.wf=2.4;                       // normal speed -50%
+      shTopSpeed=3.2; shMF=9; sh.wf=1.8; sh.wa=0.16;           // normal speed -50%, calm tail
       if (sh.timer<=0){ sh.state='hunt'; sh.timer=rnd(4.5,6.5); sh.target=this.nearestBoid(sh.pos); }
     } else { // HUNT — lock a fish and run it down
       if (!sh.target) sh.target=this.nearestBoid(sh.pos);
       const tg=sh.target ? sh.target.pos : sh.pos;
       const st=steerTo([tg[0]-sh.pos[0],tg[1]-sh.pos[1],tg[2]-sh.pos[2]], sh.vel, 13, 22);
       sacc[0]+=st[0]*1.6; sacc[1]+=st[1]*1.6; sacc[2]+=st[2]*1.6;
-      shTopSpeed=13; shMF=22; sh.wf=7.0;                        // tail thrashes fast
+      shTopSpeed=13; shMF=22; sh.wf=7.0; sh.wa=0.5;             // tail thrashes fast
       const cd=(tg[0]-sh.pos[0])**2+(tg[1]-sh.pos[1])**2+(tg[2]-sh.pos[2])**2;
       if (cd<2.0){                                              // CAUGHT — eat the fish
         const idx=this.boids.indexOf(sh.target);
@@ -682,7 +682,7 @@ const LIFE = [
     // travelling goals (each school roams its own region/phase)
     for (const s of this.schools){
       s.goal[0]=Math.cos(t*s.gs[0]+s.gp)*(BND.x*0.7);
-      s.goal[1]=9+Math.sin(t*s.gs[1]+s.gp)*4.5;
+      s.goal[1]=(BND.y0+BND.y1)/2 + Math.sin(t*s.gs[1]+s.gp)*((BND.y1-BND.y0)*0.42);
       s.goal[2]=Math.sin(t*s.gs[2]+s.gp)*(BND.z*0.7);
     }
 
