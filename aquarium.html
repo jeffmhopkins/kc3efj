@@ -668,7 +668,7 @@ const LIFE = [
   // build a shark: random body form + random hue, given a palette hue slot
   makeSharkObj(pos, hueIdx){
     return { pos:[pos[0],pos[1],pos[2]], vel:[1,0,0], yaw:0,pitch:0,roll:0,
-      ph:0, wf:2.4, wa:0.5, u:0, state:'patrol', timer:rnd(7,12), target:null,
+      ph:0, wf:2.4, wa:0.5, u:0, state:'patrol', timer:rnd(7,12), target:null, tgtTimer:15,
       lunge:0, eaten:0, quota:10, hueIdx,
       form:SHARK_FORMS[(Math.random()*SHARK_FORMS.length)|0], hj:rnd(-30,30) };
   },
@@ -738,9 +738,10 @@ const LIFE = [
       }
     }
   },
-  nearestBoid(p){
+  nearestBoid(p, not){
     let best=null, bd=1e9;
     for (const o of this.boids){
+      if (o===not) continue;
       const d=(o.pos[0]-p[0])**2+(o.pos[1]-p[1])**2+(o.pos[2]-p[2])**2;
       if (d<bd){ bd=d; best=o; }
     }
@@ -804,9 +805,11 @@ const LIFE = [
       sacc[0]+=st[0]; sacc[1]+=st[1]; sacc[2]+=st[2];
       shTopSpeed=3.2; shMF=9; sh.wf=1.8; sh.wa=0.16;           // normal speed -50%, calm tail
       if (sh.timer<=0){ sh.state='hunt'; sh.eaten=0; sh.quota=10+(Math.random()*5|0);
-        sh.target=this.nearestBoid(sh.pos); }                 // must eat ≥10 before satiated
+        sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=15; } // must eat ≥10 before satiated
     } else { // HUNT — lock a fish and run it down
-      if (!sh.target) sh.target=this.nearestBoid(sh.pos);
+      if (!sh.target){ sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=15; }
+      sh.tgtTimer-=dt;
+      if (sh.tgtTimer<=0){ sh.target=this.nearestBoid(sh.pos, sh.target); sh.tgtTimer=15; } // can't catch it — switch
       const tg=sh.target ? sh.target.pos : sh.pos;
       const st=steerTo([tg[0]-sh.pos[0],tg[1]-sh.pos[1],tg[2]-sh.pos[2]], sh.vel, 13, 22);
       sacc[0]+=st[0]*1.6; sacc[1]+=st[1]*1.6; sacc[2]+=st[2]*1.6;
@@ -824,7 +827,7 @@ const LIFE = [
         if (sh.eaten>=sh.quota){                                // full — long calm patrol ≥2 min
           sh.target=null; sh.state='patrol'; sh.timer=rnd(120,160);
           sh.u=Math.atan2(sh.pos[2]/7.5||0, 1);
-        } else sh.target=this.nearestBoid(sh.pos);             // still hungry — grab the next one
+        } else { sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=15; } // still hungry — grab the next one
       }
     }
     boundsForce(sh.pos, sacc, 4, 16);
@@ -1015,17 +1018,20 @@ const LIFE = [
         { h:p.hue, s:62, l0:12, l1:24, a:k, edge:30, edgeA:0.7 });
     }
     const sh=this.shark;
-    // shark flushes brighter/redder while hunting; its form + hue are randomised
+    // a hunting shark pulses hot/red so the hunt reads clearly; form + hue are randomised
     const hunt = sh.state==='hunt';
     const shHue=mod(PAL.h[sh.hueIdx]+sh.hj,360);
+    const pul = Math.sin(t*7)*0.5+0.5;
+    const sHue = hunt ? lerpHue(shHue, 5, 0.25+pul*0.35) : shHue;   // flush toward red on the pulse
     gatherFaces(transformPts(fishVerts(sh,t,sh.form), sh.pos, sh.yaw, sh.pitch, sh.roll,
       [1.5,1.7,3.1]), sh.form.f,
-      { h:shHue, s:hunt?75:55, l0:hunt?20:13, l1:hunt?34:26, a:a, edge:32, edgeA:hunt?1:0.8 });
+      { h:sHue, s:hunt?(80+pul*15):55, l0:hunt?(16+pul*24):13, l1:hunt?34:26, a:a, edge:32, edgeA:hunt?(0.7+pul*0.3):0.8 });
     if (this.rival){
       const rv=this.rival, rvHue=mod(PAL.h[rv.hueIdx]+rv.hj,360);
+      const rp=Math.sin(t*7+1.6)*0.5+0.5;                          // intruder pulses aggressively too
       gatherFaces(transformPts(fishVerts(rv,t,rv.form), rv.pos, rv.yaw, rv.pitch, rv.roll,
         [1.55,1.75,3.2]), rv.form.f,
-        { h:rvHue, s:82, l0:24, l1:38, a:a, edge:34, edgeA:1 });   // intruder, vivid
+        { h:lerpHue(rvHue,5,0.2+rp*0.3), s:82, l0:24+rp*18, l1:38, a:a, edge:34, edgeA:1 });
     }
   }
 },
