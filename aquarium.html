@@ -689,12 +689,12 @@ const LIFE = [
     // --- Reynolds 3D boids: flock within own school, avoid all neighbours --
     const B=this.boids;
     const PERC=8.5, PERC2=PERC*PERC, SEP=2.9, SEP2=SEP*SEP, MF=6;
-    const W_SEP=2.3, W_ALI=1.35, W_COH=0.95, W_GOAL=0.9, W_FLEE=5.0;
+    const W_SEP=2.3, W_ALI=1.35, W_COH=0.95, W_GOAL=0.9, W_FLEE=5.0, W_AVOID=0.45;
     const hunting = sh.state==='hunt';
     for (const c of B){
       const v=c.vel, sp0=Math.hypot(v[0],v[1],v[2])||1;
       const hx=v[0]/sp0, hy=v[1]/sp0, hz=v[2]/sp0;            // heading, for FOV
-      let cx=0,cy=0,cz=0, ax=0,ay=0,az=0, sx=0,sy=0,sz=0, n=0;
+      let cx=0,cy=0,cz=0, ax=0,ay=0,az=0, sx=0,sy=0,sz=0, ox=0,oy=0,oz=0, n=0;
       for (const o of B){
         if (o===c) continue;
         const dx=o.pos[0]-c.pos[0], dy=o.pos[1]-c.pos[1], dz=o.pos[2]-c.pos[2];
@@ -702,7 +702,9 @@ const LIFE = [
         if (d2>PERC2 || d2===0) continue;
         const d=Math.sqrt(d2);
         if (d2<SEP2){ const w=1/d2; sx-=dx*w; sy-=dy*w; sz-=dz*w; }  // separate from ALL fish
-        if (o.school!==c.school) continue;                    // align/cohere only within own school
+        if (o.school!==c.school){                              // very slight push away from other schools
+          const w=1/d2; ox-=dx*w; oy-=dy*w; oz-=dz*w; continue;
+        }                                                     // align/cohere only within own school
         if ((dx*hx+dy*hy+dz*hz)/d < -0.55) continue;          // ~240° FOV
         n++;
         cx+=o.pos[0]; cy+=o.pos[1]; cz+=o.pos[2];
@@ -717,6 +719,10 @@ const LIFE = [
       if (sx||sy||sz){
         const sep=steerTo([sx,sy,sz], v, c.ms, MF);
         acc[0]+=sep[0]*W_SEP; acc[1]+=sep[1]*W_SEP; acc[2]+=sep[2]*W_SEP;
+      }
+      if (ox||oy||oz){
+        const av=steerTo([ox,oy,oz], v, c.ms, MF);
+        acc[0]+=av[0]*W_AVOID; acc[1]+=av[1]*W_AVOID; acc[2]+=av[2]*W_AVOID;
       }
       const g=this.schools[c.school].goal;
       const go=steerTo([g[0]-c.pos[0], g[1]-c.pos[1], g[2]-c.pos[2]], v, c.ms, MF);
