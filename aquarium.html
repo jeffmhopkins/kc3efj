@@ -663,7 +663,7 @@ const LIFE = [
     this.pieceMesh=octa();
     this.foods=[];                                     // pellets of fish food sinking from the top
     this.crumbs=[];                                    // bits that break off food as fish nibble
-    this.foodTimer=rnd(60,120);                        // 1–2 min between feedings
+    this.foodTimer=rnd(120,360);                       // 2–6 min between feedings
     this.rival=null;                                   // intruder shark during a takeover event
     this.rivalTimer=rnd(420,900);                      // 7–15 min until a rival appears
     this.shark=this.makeSharkObj([0,6,0], 1);
@@ -830,7 +830,7 @@ const LIFE = [
 
     // periodic feeding: drop pellets from the top every 1–2 min
     this.foodTimer-=dt;
-    if (this.foodTimer<=0){ this.dropFood(); this.foodTimer=rnd(60,120); }
+    if (this.foodTimer<=0){ this.dropFood(); this.foodTimer=rnd(120,360); }
 
     // a rival shark periodically invades and chases the resident to the death
     if (!this.rival){ this.rivalTimer-=dt; if (this.rivalTimer<=0) this.spawnRival(); }
