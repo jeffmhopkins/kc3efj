@@ -672,7 +672,7 @@ const LIFE = [
   dropFood(){
     const n=3+(Math.random()*3|0);
     for (let i=0;i<n;i++) this.foods.push({
-      pos:[rnd(-BND.x*0.6,BND.x*0.6), BND.y1-0.3, rnd(-BND.z*0.6,BND.z*0.6)],
+      pos:[rnd(-BND.x*0.6,BND.x*0.6), rnd(11,14), rnd(-BND.z*0.6,BND.z*0.6)], // upper water, in view
       vel:[rnd(-0.2,0.2), -rnd(0.4,0.8), rnd(-0.2,0.2)],
       size:rnd(0.9,1.6), biteCd:0, life:rnd(45,75), ang:rnd(TAU), spin:rnd(-2,2),
       hue:mod(38+rnd(-12,12),360)                      // amber/green food
@@ -699,7 +699,7 @@ const LIFE = [
     if (bf && bd<625){                                  // within 25 units: go for it
       const lu=steerTo([bf.pos[0]-c.pos[0],bf.pos[1]-c.pos[1],bf.pos[2]-c.pos[2]], v, c.ms, maxF);
       acc[0]+=lu[0]*2.6; acc[1]+=lu[1]*2.6; acc[2]+=lu[2]*2.6;
-      if (bd<1.6 && bf.biteCd<=0){ bf.size*=0.95; bf.biteCd=0.12; this.spawnCrumb(bf.pos, bf.hue); } // chomp
+      if (bd<1.6 && bf.biteCd<=0){ bf.size*=0.975; bf.biteCd=0.12; this.spawnCrumb(bf.pos, bf.hue); } // chomp (~2.5%, doubled bite count)
     }
   },
   // build a shark: random body form + random hue, given a palette hue slot
@@ -824,7 +824,7 @@ const LIFE = [
     }
   },
   update(dt){
-    const P=u=>[Math.sin(u)*(BND.x*0.8), 8.5+Math.sin(u*0.6)*3.5, Math.sin(2*u)*(BND.z*0.58)];
+    const P=u=>[Math.sin(u)*(BND.x*0.8), 9+Math.sin(u*0.6)*2.3, Math.sin(2*u)*(BND.z*0.58)];
     let sh=this.shark;
 
     // periodic feeding: drop pellets from the top every 1–2 min
@@ -875,6 +875,13 @@ const LIFE = [
     sh.vel[0]+=sacc[0]*dt; sh.vel[1]+=sacc[1]*dt; sh.vel[2]+=sacc[2]*dt;
     let shs=Math.hypot(sh.vel[0],sh.vel[1],sh.vel[2])||1;
     if (shs>shTopSpeed){ const k=shTopSpeed/shs; sh.vel[0]*=k; sh.vel[1]*=k; sh.vel[2]*=k; }
+    // smooth the cruise: average the velocity vector so it glides instead of bobbing vertically
+    if (!sh.avgVel) sh.avgVel=[sh.vel[0],sh.vel[1],sh.vel[2]];
+    const ka=1-Math.exp(-3*dt);
+    sh.avgVel[0]=lerp(sh.avgVel[0],sh.vel[0],ka);
+    sh.avgVel[1]=lerp(sh.avgVel[1],sh.vel[1],ka);
+    sh.avgVel[2]=lerp(sh.avgVel[2],sh.vel[2],ka);
+    if (sh.state==='patrol'){ sh.vel[0]=sh.avgVel[0]; sh.vel[1]=sh.avgVel[1]; sh.vel[2]=sh.avgVel[2]; }
     sh.pos[0]+=sh.vel[0]*dt; sh.pos[1]+=sh.vel[1]*dt; sh.pos[2]+=sh.vel[2]*dt;
     containBox(sh.pos, sh.vel, 0.8);
     headingOf(sh, dt);
