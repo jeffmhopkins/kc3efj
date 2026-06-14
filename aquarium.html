@@ -634,8 +634,9 @@ const LIFE = [
     }
     // shark with a patrol/hunt state machine — pronounced tail swish
     this.respawns=[];                                  // eaten fish waiting to swim back in
+    this.chomps=[];                                    // brief burst effects where fish were eaten
     this.shark={ pos:[0,6,0], vel:[1,0,0], yaw:0,pitch:0,roll:0, ph:0, wf:2.4, wa:0.5,
-      u:0, state:'patrol', timer:rnd(7,12), target:null, lunge:0 };
+      u:0, state:'patrol', timer:rnd(7,12), target:null, lunge:0, eaten:0, quota:10 };
   },
   nearestBoid(p){
     let best=null, bd=1e9;
@@ -660,6 +661,15 @@ const LIFE = [
     headingOf(b, 0.05);
     this.boids.push(b);
   },
+  // burst of bits + shock ring where a fish was eaten
+  spawnChomp(pos, size){
+    const parts=[], n=10+(Math.random()*7|0);
+    for (let i=0;i<n;i++){
+      const d=norm3([rnd(-1,1),rnd(-1,1),rnd(-1,1)]), sp=rnd(2,5.5);
+      parts.push({ p:[pos[0],pos[1],pos[2]], v:[d[0]*sp,d[1]*sp,d[2]*sp] });
+    }
+    this.chomps.push({ pos:[pos[0],pos[1],pos[2]], parts, age:0, life:0.85, size });
+  },
   update(dt){
     const P=u=>[Math.sin(u)*(BND.x*0.8), 8.5+Math.sin(u*0.6)*3.5, Math.sin(2*u)*(BND.z*0.58)];
     const sh=this.shark;
@@ -674,7 +684,8 @@ const LIFE = [
       const st=steerTo([tp[0]-sh.pos[0],tp[1]-sh.pos[1],tp[2]-sh.pos[2]], sh.vel, 3, 9);
       sacc[0]+=st[0]; sacc[1]+=st[1]; sacc[2]+=st[2];
       shTopSpeed=3.2; shMF=9; sh.wf=1.8; sh.wa=0.16;           // normal speed -50%, calm tail
-      if (sh.timer<=0){ sh.state='hunt'; sh.timer=rnd(4.5,6.5); sh.target=this.nearestBoid(sh.pos); }
+      if (sh.timer<=0){ sh.state='hunt'; sh.eaten=0; sh.quota=10+(Math.random()*5|0);
+        sh.target=this.nearestBoid(sh.pos); }                 // must eat ≥10 before satiated
     } else { // HUNT — lock a fish and run it down
       if (!sh.target) sh.target=this.nearestBoid(sh.pos);
       const tg=sh.target ? sh.target.pos : sh.pos;
@@ -686,13 +697,16 @@ const LIFE = [
         const idx=this.boids.indexOf(sh.target);
         if (idx>=0){
           const e=this.boids[idx];
+          this.spawnChomp(e.pos, e.size);                       // eat animation
           this.boids.splice(idx,1);
           this.respawns.push({ school:e.school, size:e.size, ms:e.ms, hj:e.hj, t:rnd(3,30) });
+          sh.eaten++;
         }
-        sh.target=null; sh.state='patrol'; sh.timer=rnd(120,160); // satiated: calm ≥2 min
-        sh.u=Math.atan2(sh.pos[2]/7.5||0, 1);
-      } else if (sh.timer<=0){ sh.state='patrol'; sh.timer=rnd(9,16); sh.target=null;
-        sh.u=Math.atan2(sh.pos[2]/7.5||0, 1); }                // gave up — rejoin the path
+        if (sh.eaten>=sh.quota){                                // full — long calm patrol ≥2 min
+          sh.target=null; sh.state='patrol'; sh.timer=rnd(120,160);
+          sh.u=Math.atan2(sh.pos[2]/7.5||0, 1);
+        } else sh.target=this.nearestBoid(sh.pos);             // still hungry — grab the next one
+      }
     }
     boundsForce(sh.pos, sacc, 4, 16);
     sh.vel[0]+=sacc[0]*dt; sh.vel[1]+=sacc[1]*dt; sh.vel[2]+=sacc[2]*dt;
@@ -783,6 +797,16 @@ const LIFE = [
       r.t-=dt;
       if (r.t<=0){ this.spawnBoid(r); this.respawns.splice(i,1); }
     }
+    // advance + retire eat-burst effects
+    for (let i=this.chomps.length-1;i>=0;i--){
+      const ch=this.chomps[i];
+      ch.age+=dt;
+      for (const pt of ch.parts){
+        pt.p[0]+=pt.v[0]*dt; pt.p[1]+=pt.v[1]*dt; pt.p[2]+=pt.v[2]*dt;
+        pt.v[0]*=0.9; pt.v[1]=pt.v[1]*0.9-2.5*dt; pt.v[2]*=0.9;   // drag + slight sink
+      }
+      if (ch.age>=ch.life) this.chomps.splice(i,1);
+    }
 
     // --- solitary prey fish: lazy wander, panic-flee the shark ---
     for (const c of this.loners){
@@ -826,6 +850,18 @@ const LIFE = [
       gatherFaces(transformPts(fishVerts(c,t,c.model), c.pos, c.yaw, c.pitch, c.roll,
         [c.size,c.size,c.size]), c.model.f,
         { h:mod(PAL.h[c.hueIdx]+c.hueOff+c.hj,360), s:74, l0:20, l1:34, a:a, edge:28, edgeA:0.8 });
+    }
+    // eat bursts: scattering bits + an expanding shock ring
+    for (const ch of this.chomps){
+      const rp=ch.age/ch.life, k=(1-rp)*a;
+      for (const pt of ch.parts) point3(pt.p, 0.6*ch.size, PAL.h[1], 100, 72, k);
+      const rr=lerp(0.3, ch.size*5+3, rp), n2=18;
+      for (let s2=0;s2<n2;s2++){
+        const a0=s2/n2*TAU, a1=(s2+1)/n2*TAU;
+        line3([ch.pos[0]+Math.cos(a0)*rr, ch.pos[1], ch.pos[2]+Math.sin(a0)*rr],
+              [ch.pos[0]+Math.cos(a1)*rr, ch.pos[1], ch.pos[2]+Math.sin(a1)*rr],
+              PAL.h[1], 100, 76, k*0.7, 1.4);
+      }
     }
     const sh=this.shark;
     // shark flushes brighter/redder while hunting
