@@ -661,14 +661,51 @@ const LIFE = [
     this.chomps=[];                                    // brief burst effects where fish were eaten
     this.pieces=[];                                    // chunks of a slain shark falling to the floor
     this.pieceMesh=octa();
+    this.foods=[];                                     // pellets of fish food sinking from the top
+    this.crumbs=[];                                    // bits that break off food as fish nibble
+    this.foodTimer=rnd(60,120);                        // 1–2 min between feedings
     this.rival=null;                                   // intruder shark during a takeover event
     this.rivalTimer=rnd(420,900);                      // 7–15 min until a rival appears
     this.shark=this.makeSharkObj([0,6,0], 1);
   },
+  // a feeding: a few pellets drop in from the top and sink slowly
+  dropFood(){
+    const n=3+(Math.random()*3|0);
+    for (let i=0;i<n;i++) this.foods.push({
+      pos:[rnd(-BND.x*0.6,BND.x*0.6), BND.y1-0.3, rnd(-BND.z*0.6,BND.z*0.6)],
+      vel:[rnd(-0.2,0.2), -rnd(0.4,0.8), rnd(-0.2,0.2)],
+      size:rnd(0.9,1.6), biteCd:0, life:rnd(45,75), ang:rnd(TAU), spin:rnd(-2,2),
+      hue:mod(38+rnd(-12,12),360)                      // amber/green food
+    });
+  },
+  // a nibble knocks a crumb or two loose; they tumble and fall
+  spawnCrumb(pos, hue){
+    const n=1+(Math.random()*2|0);
+    for (let i=0;i<n;i++){
+      const d=norm3([rnd(-1,1),rnd(-0.4,0.4),rnd(-1,1)]);
+      this.crumbs.push({ pos:[pos[0]+rnd(-0.3,0.3),pos[1]+rnd(-0.3,0.3),pos[2]+rnd(-0.3,0.3)],
+        vel:[d[0]*1.2, -rnd(0.5,1.6), d[2]*1.2], size:rnd(0.1,0.25), hue, life:rnd(1.2,2.4) });
+    }
+  },
+  // fish steer to the nearest pellet; up close they chomp it 5% smaller
+  lureFood(c, v, acc, maxF, dt){
+    if (!this.foods.length) return;
+    let bf=null, bd=1e9;
+    for (const f of this.foods){
+      const dx=f.pos[0]-c.pos[0], dy=f.pos[1]-c.pos[1], dz=f.pos[2]-c.pos[2];
+      const d2=dx*dx+dy*dy+dz*dz;
+      if (d2<bd){ bd=d2; bf=f; }
+    }
+    if (bf && bd<625){                                  // within 25 units: go for it
+      const lu=steerTo([bf.pos[0]-c.pos[0],bf.pos[1]-c.pos[1],bf.pos[2]-c.pos[2]], v, c.ms, maxF);
+      acc[0]+=lu[0]*2.6; acc[1]+=lu[1]*2.6; acc[2]+=lu[2]*2.6;
+      if (bd<1.6 && bf.biteCd<=0){ bf.size*=0.95; bf.biteCd=0.12; this.spawnCrumb(bf.pos, bf.hue); } // chomp
+    }
+  },
   // build a shark: random body form + random hue, given a palette hue slot
   makeSharkObj(pos, hueIdx){
     return { pos:[pos[0],pos[1],pos[2]], vel:[1,0,0], yaw:0,pitch:0,roll:0,
-      ph:0, wf:2.4, wa:0.5, u:0, state:'patrol', timer:rnd(7,12), target:null, tgtTimer:15,
+      ph:0, wf:2.4, wa:0.5, u:0, state:'patrol', timer:rnd(7,12), target:null, tgtTimer:6,
       lunge:0, eaten:0, quota:10, hueIdx,
       form:SHARK_FORMS[(Math.random()*SHARK_FORMS.length)|0], hj:rnd(-30,30) };
   },
@@ -790,6 +827,10 @@ const LIFE = [
     const P=u=>[Math.sin(u)*(BND.x*0.8), 8.5+Math.sin(u*0.6)*3.5, Math.sin(2*u)*(BND.z*0.58)];
     let sh=this.shark;
 
+    // periodic feeding: drop pellets from the top every 1–2 min
+    this.foodTimer-=dt;
+    if (this.foodTimer<=0){ this.dropFood(); this.foodTimer=rnd(60,120); }
+
     // a rival shark periodically invades and chases the resident to the death
     if (!this.rival){ this.rivalTimer-=dt; if (this.rivalTimer<=0) this.spawnRival(); }
     if (this.rival){ this.updateChase(dt); }
@@ -805,11 +846,11 @@ const LIFE = [
       sacc[0]+=st[0]; sacc[1]+=st[1]; sacc[2]+=st[2];
       shTopSpeed=3.2; shMF=9; sh.wf=1.8; sh.wa=0.16;           // normal speed -50%, calm tail
       if (sh.timer<=0){ sh.state='hunt'; sh.eaten=0; sh.quota=10+(Math.random()*5|0);
-        sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=15; } // must eat ≥10 before satiated
+        sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=6; } // must eat ≥10 before satiated
     } else { // HUNT — lock a fish and run it down
-      if (!sh.target){ sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=15; }
+      if (!sh.target){ sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=6; }
       sh.tgtTimer-=dt;
-      if (sh.tgtTimer<=0){ sh.target=this.nearestBoid(sh.pos, sh.target); sh.tgtTimer=15; } // can't catch it — switch
+      if (sh.tgtTimer<=0){ sh.target=this.nearestBoid(sh.pos, sh.target); sh.tgtTimer=6; } // can't catch it — switch
       const tg=sh.target ? sh.target.pos : sh.pos;
       const st=steerTo([tg[0]-sh.pos[0],tg[1]-sh.pos[1],tg[2]-sh.pos[2]], sh.vel, 13, 22);
       sacc[0]+=st[0]*1.6; sacc[1]+=st[1]*1.6; sacc[2]+=st[2]*1.6;
@@ -827,7 +868,7 @@ const LIFE = [
         if (sh.eaten>=sh.quota){                                // full — long calm patrol ≥2 min
           sh.target=null; sh.state='patrol'; sh.timer=rnd(120,160);
           sh.u=Math.atan2(sh.pos[2]/7.5||0, 1);
-        } else { sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=15; } // still hungry — grab the next one
+        } else { sh.target=this.nearestBoid(sh.pos); sh.tgtTimer=6; } // still hungry — grab the next one
       }
     }
     boundsForce(sh.pos, sacc, 4, 16);
@@ -889,6 +930,7 @@ const LIFE = [
       const go=steerTo([g[0]-c.pos[0], g[1]-c.pos[1], g[2]-c.pos[2]], v, c.ms, MF);
       acc[0]+=go[0]*W_GOAL; acc[1]+=go[1]*W_GOAL; acc[2]+=go[2]*W_GOAL;
       this.lurePieces(c, v, acc, MF, dt);                  // scavenge fallen shark chunks
+      this.lureFood(c, v, acc, MF, dt);                    // chase sinking food pellets
 
       // flee the shark — stronger, wider, and harder while it hunts
       const fx=c.pos[0]-sh.pos[0], fy=c.pos[1]-sh.pos[1], fz=c.pos[2]-sh.pos[2];
@@ -949,6 +991,24 @@ const LIFE = [
       }
       if (p.life<=0 || p.size<0.15) this.pieces.splice(i,1);
     }
+    // sinking food pellets: drift down, settle on the floor, expire if uneaten
+    for (let i=this.foods.length-1;i>=0;i--){
+      const f=this.foods[i];
+      f.biteCd-=dt; f.life-=dt;
+      f.vel[1]=Math.max(f.vel[1]-0.3*dt, -1.2); f.vel[0]*=0.98; f.vel[2]*=0.98;
+      f.pos[0]+=f.vel[0]*dt; f.pos[1]+=f.vel[1]*dt; f.pos[2]+=f.vel[2]*dt;
+      f.ang+=f.spin*dt;
+      if (f.pos[1]<=BND.y0+0.3){ f.pos[1]=BND.y0+0.3; f.vel[1]=0; f.vel[0]*=0.6; f.vel[2]*=0.6; }
+      if (f.size<0.25 || f.life<=0) this.foods.splice(i,1);
+    }
+    // crumbs knocked off the food: tumble and fall, then fade
+    for (let i=this.crumbs.length-1;i>=0;i--){
+      const cr=this.crumbs[i];
+      cr.life-=dt; cr.vel[1]-=4*dt;
+      cr.pos[0]+=cr.vel[0]*dt; cr.pos[1]+=cr.vel[1]*dt; cr.pos[2]+=cr.vel[2]*dt;
+      if (cr.pos[1]<BND.y0+0.2){ cr.pos[1]=BND.y0+0.2; cr.vel[1]*=-0.2; cr.vel[0]*=0.5; cr.vel[2]*=0.5; }
+      if (cr.life<=0) this.crumbs.splice(i,1);
+    }
 
     // --- solitary prey fish: lazy wander, panic-flee the shark ---
     for (const c of this.loners){
@@ -958,6 +1018,7 @@ const LIFE = [
       const ws=steerTo(wd, v, c.ms, 6);
       acc[0]+=ws[0]; acc[1]+=ws[1]; acc[2]+=ws[2];
       this.lurePieces(c, v, acc, 6, dt);                   // scavenge fallen shark chunks
+      this.lureFood(c, v, acc, 6, dt);                     // chase sinking food pellets
       // flee the shark — stronger/wider while it hunts
       const fx=c.pos[0]-sh.pos[0], fy=c.pos[1]-sh.pos[1], fz=c.pos[2]-sh.pos[2];
       const fd2=fx*fx+fy*fy+fz*fz;
@@ -1016,6 +1077,16 @@ const LIFE = [
       gatherFaces(transformPts(this.pieceMesh.v, p.pos, p.ang[1], p.ang[0], p.ang[2],
         [p.size*0.6,p.size*0.6,p.size*0.6]), this.pieceMesh.f,
         { h:p.hue, s:62, l0:12, l1:24, a:k, edge:30, edgeA:0.7 });
+    }
+    // sinking food pellets + the crumbs nibbled off them
+    for (const f of this.foods){
+      gatherFaces(transformPts(this.pieceMesh.v, f.pos, f.ang,0,0,
+        [f.size*0.4,f.size*0.4,f.size*0.4]), this.pieceMesh.f,
+        { h:f.hue, s:80, l0:30, l1:28, a:a, edge:24, edgeA:0.9 });
+    }
+    for (const cr of this.crumbs){
+      const k=clamp(cr.life/1.5,0,1)*a;
+      point3(cr.pos, cr.size*4, cr.hue, 85, 64, k);
     }
     const sh=this.shark;
     // a hunting shark pulses hot/red so the hunt reads clearly; form + hue are randomised
