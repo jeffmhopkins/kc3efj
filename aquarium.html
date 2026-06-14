@@ -610,7 +610,8 @@ const LIFE = [
       });
     }
     // shark with a patrol/hunt state machine — pronounced tail swish
-    this.shark={ pos:[0,6,0], vel:[1,0,0], yaw:0,pitch:0,roll:0, ph:0, wf:3.0, wa:0.5,
+    this.respawns=[];                                  // eaten fish waiting to swim back in
+    this.shark={ pos:[0,6,0], vel:[1,0,0], yaw:0,pitch:0,roll:0, ph:0, wf:2.4, wa:0.5,
       u:0, state:'patrol', timer:rnd(7,12), target:null, lunge:0 };
   },
   nearestBoid(p){
@@ -621,6 +622,21 @@ const LIFE = [
     }
     return best;
   },
+  // replacement fish: spawn just beyond a wall (off-screen) and swim inward
+  spawnBoid(r){
+    const side=(Math.random()*4|0), M=BND.x+7, y=rnd(BND.y0+2,BND.y1-2);
+    let pos, dir;
+    if      (side===0){ pos=[-M, y, rnd(-BND.z*0.6,BND.z*0.6)]; dir=[1,0,0]; }
+    else if (side===1){ pos=[ M, y, rnd(-BND.z*0.6,BND.z*0.6)]; dir=[-1,0,0]; }
+    else if (side===2){ pos=[rnd(-BND.x*0.6,BND.x*0.6), y, -M]; dir=[0,0,1]; }
+    else              { pos=[rnd(-BND.x*0.6,BND.x*0.6), y,  M]; dir=[0,0,-1]; }
+    const sp=r.ms;
+    const b={ school:r.school, pos, vel:[dir[0]*sp,dir[1]*sp,dir[2]*sp],
+      yaw:0,pitch:0,roll:0, ph:rnd(TAU), wf:rnd(8,11), wa:0.3,
+      size:r.size, hj:r.hj, ms:r.ms, entering:true };
+    headingOf(b, 0.05);
+    this.boids.push(b);
+  },
   update(dt){
     const P=u=>[Math.sin(u)*(BND.x*0.8), 8.5+Math.sin(u*0.6)*3.5, Math.sin(2*u)*(BND.z*0.58)];
     const sh=this.shark;
@@ -630,22 +646,30 @@ const LIFE = [
     const sacc=[0,0,0];
     let shTopSpeed, shMF;
     if (sh.state==='patrol'){
-      sh.u += dt*0.14;
+      sh.u += dt*0.07;                                        // path advance halved with the cruise
       const tp=P(sh.u+0.35);                                   // chase a point ahead on the path
-      const st=steerTo([tp[0]-sh.pos[0],tp[1]-sh.pos[1],tp[2]-sh.pos[2]], sh.vel, 6, 11);
+      const st=steerTo([tp[0]-sh.pos[0],tp[1]-sh.pos[1],tp[2]-sh.pos[2]], sh.vel, 3, 9);
       sacc[0]+=st[0]; sacc[1]+=st[1]; sacc[2]+=st[2];
-      shTopSpeed=6.4; shMF=11; sh.wf=3.0;
+      shTopSpeed=3.2; shMF=9; sh.wf=2.4;                       // normal speed -50%
       if (sh.timer<=0){ sh.state='hunt'; sh.timer=rnd(4.5,6.5); sh.target=this.nearestBoid(sh.pos); }
     } else { // HUNT — lock a fish and run it down
       if (!sh.target) sh.target=this.nearestBoid(sh.pos);
-      const tg=sh.target.pos;
+      const tg=sh.target ? sh.target.pos : sh.pos;
       const st=steerTo([tg[0]-sh.pos[0],tg[1]-sh.pos[1],tg[2]-sh.pos[2]], sh.vel, 13, 22);
       sacc[0]+=st[0]*1.6; sacc[1]+=st[1]*1.6; sacc[2]+=st[2]*1.6;
       shTopSpeed=13; shMF=22; sh.wf=7.0;                        // tail thrashes fast
       const cd=(tg[0]-sh.pos[0])**2+(tg[1]-sh.pos[1])**2+(tg[2]-sh.pos[2])**2;
-      if (cd<1.6) sh.target=this.nearestBoid(sh.pos);          // "snap" — re-acquire (fish survives, scatters)
-      if (sh.timer<=0){ sh.state='patrol'; sh.timer=rnd(9,16); sh.target=null;
-        sh.u=Math.atan2(sh.pos[2]/7.5||0, 1); }                // rejoin the path roughly
+      if (cd<2.0){                                              // CAUGHT — eat the fish
+        const idx=this.boids.indexOf(sh.target);
+        if (idx>=0){
+          const e=this.boids[idx];
+          this.boids.splice(idx,1);
+          this.respawns.push({ school:e.school, size:e.size, ms:e.ms, hj:e.hj, t:rnd(3,30) });
+        }
+        sh.target=null; sh.state='patrol'; sh.timer=rnd(120,160); // satiated: calm ≥2 min
+        sh.u=Math.atan2(sh.pos[2]/7.5||0, 1);
+      } else if (sh.timer<=0){ sh.state='patrol'; sh.timer=rnd(9,16); sh.target=null;
+        sh.u=Math.atan2(sh.pos[2]/7.5||0, 1); }                // gave up — rejoin the path
     }
     boundsForce(sh.pos, sacc, 4, 16);
     sh.vel[0]+=sacc[0]*dt; sh.vel[1]+=sacc[1]*dt; sh.vel[2]+=sacc[2]*dt;
@@ -717,8 +741,17 @@ const LIFE = [
       const tgt = sp>top?top : sp<lo?lo : sp;
       if (tgt!==sp){ const k=tgt/sp; v[0]*=k; v[1]*=k; v[2]*=k; }
       c.pos[0]+=v[0]*dt; c.pos[1]+=v[1]*dt; c.pos[2]+=v[2]*dt;
-      containBox(c.pos, v);
+      if (c.entering){                                   // swimming in from off-screen
+        if (Math.abs(c.pos[0])<BND.x-1 && Math.abs(c.pos[2])<BND.z-1) c.entering=false;
+      } else containBox(c.pos, v);
       headingOf(c, dt);
+    }
+
+    // eaten fish swim back in sometime within 30s
+    for (let i=this.respawns.length-1;i>=0;i--){
+      const r=this.respawns[i];
+      r.t-=dt;
+      if (r.t<=0){ this.spawnBoid(r); this.respawns.splice(i,1); }
     }
 
     // --- solitary prey fish: lazy wander, panic-flee the shark ---
