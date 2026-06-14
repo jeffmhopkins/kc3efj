@@ -539,13 +539,13 @@ function headingOf(c, dt){
   c.roll = lerp(c.roll, clamp(-turn*0.16,-0.55,0.55), k);
 }
 // proportional turn-back so creatures bank away from walls smoothly
-function boundsForce(p, acc, m=5, g=14){
+function boundsForce(p, acc, m=5, g=14, my=2){
   if (p[0]> BND.x-m)  acc[0]-=g*(p[0]-(BND.x-m))/m;
   if (p[0]<-BND.x+m)  acc[0]+=g*((-BND.x+m)-p[0])/m;
   if (p[2]> BND.z-m)  acc[2]-=g*(p[2]-(BND.z-m))/m;
   if (p[2]<-BND.z+m)  acc[2]+=g*((-BND.z+m)-p[2])/m;
-  if (p[1]> BND.y1-m) acc[1]-=g*(p[1]-(BND.y1-m))/m;
-  if (p[1]< BND.y0+m) acc[1]+=g*((BND.y0+m)-p[1])/m;
+  if (p[1]> BND.y1-my) acc[1]-=g*(p[1]-(BND.y1-my))/my;   // smaller vertical margin: use the full height
+  if (p[1]< BND.y0+my) acc[1]+=g*((BND.y0+my)-p[1])/my;
 }
 // hard tank containment: even mid-panic a creature can't pass the glass —
 // it's clamped to the wall and its outward velocity is damped (slides along).
