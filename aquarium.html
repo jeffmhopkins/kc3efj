@@ -717,7 +717,7 @@ const LIFE = [
   // build a shark: random body form + random hue, given a palette hue slot
   makeSharkObj(pos, hueIdx){
     return { pos:[pos[0],pos[1],pos[2]], vel:[1,0,0], yaw:0,pitch:0,roll:0,
-      ph:0, wf:2.4, wa:0.5, u:0, state:'patrol', timer:rnd(7,12), target:null, tgtTimer:6,
+      ph:0, wf:2.4, wa:0.5, u:0, state:'patrol', timer:rnd(14,24), target:null, tgtTimer:6,
       lunge:0, eaten:0, quota:10, hueIdx,
       form:SHARK_FORMS[(Math.random()*SHARK_FORMS.length)|0], hj:rnd(-30,30),
       belly: Math.random()<0.5 ? rnd(25,70)*(Math.random()<0.5?-1:1) : 0 };  // some are dual-tone
@@ -783,7 +783,7 @@ const LIFE = [
       sh.vel[2]+=(sh.pos[2]-rv.pos[2])/d*push;
       if (rv.chomps>=5){                                              // resident slain — rival takes over
         this.killShark(sh);
-        rv.state='patrol'; rv.timer=rnd(7,12); rv.eaten=0; rv.quota=10; rv.target=null;
+        rv.state='patrol'; rv.timer=rnd(14,24); rv.eaten=0; rv.quota=10; rv.target=null;
         this.shark=rv; this.rival=null; this.rivalTimer=rnd(420,900);
       }
     }
@@ -897,7 +897,7 @@ const LIFE = [
           sh.eaten++;
         }
         if (sh.eaten>=sh.quota){                                // full — long calm patrol ≥2 min
-          sh.target=null; sh.state='patrol'; sh.timer=rnd(120,160);
+          sh.target=null; sh.state='patrol'; sh.timer=rnd(240,320);
           sh.u=Math.atan2(sh.pos[2]/7.5||0, 1);
         } else { sh.target=this.pickTarget(sh.pos); sh.tgtTimer=6; } // still hungry — grab the next one
       }
