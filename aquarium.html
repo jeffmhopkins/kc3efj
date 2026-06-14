@@ -538,6 +538,28 @@ function fishVerts(c, time, mesh=FISH){ // tail shear in model space
   }
   return out;
 }
+// parametric shark: pointed snout, tall dorsal, pectoral fins, swept tail.
+function makeShark(p={}){
+  const len=p.len??1.05, gw=p.gw??0.32, gh=p.gh??0.30, dor=p.dor??0.95,
+        pec=p.pec??0.55, tail=p.tail??1.6, tsp=p.tsp??0.64, snout=p.snout??0;
+  const v=[[0,snout,len],[0,gh,0.15],[gw,0,0.1],[0,-gh*0.8,0.2],[-gw,0,0.1],
+           [0,0,-len*0.9],[0,tsp,-tail],[0,-tsp*0.7,-tail*0.9],[0,dor,-0.25],
+           [pec,-gh*0.35,0.05],[-pec,-gh*0.35,0.05]];
+  const f=[{i:[0,1,2]},{i:[0,2,3],belly:1},{i:[0,3,4],belly:1},{i:[0,4,1]},
+           {i:[5,2,1]},{i:[5,3,2],belly:1},{i:[5,4,3],belly:1},{i:[5,1,4]},
+           {i:[5,6,7],both:1},{i:[1,8,5],both:1},
+           {i:[2,9,3],both:1},{i:[4,3,10],both:1}];   // pectoral fins
+  const wig=v.map(q=>clamp((len-q[2])/(len+tail),0,1));
+  return {v,f,wig};
+}
+// five distinct shark forms (randomly assigned per shark)
+const SHARK_FORMS = [
+  makeShark({}),                                                                  // classic
+  makeShark({len:1.25, gw:0.26, gh:0.24, dor:1.15, tail:1.9, tsp:0.72, pec:0.6, snout:0.05}), // sleek
+  makeShark({len:0.95, gw:0.44, gh:0.42, dor:0.7,  tail:1.4, tsp:0.5,  pec:0.75}),            // bulky
+  makeShark({len:1.1,  gw:0.30, gh:0.27, dor:1.4,  tail:1.6, tsp:0.55, pec:0.45}),            // tall-fin
+  makeShark({len:1.18, gw:0.36, gh:0.25, dor:0.85, tail:2.0, tsp:0.95, pec:0.85, snout:-0.05}), // wide-tail
+];
 function headingOf(c, dt){
   const sp=Math.hypot(c.vel[0],c.vel[1],c.vel[2])||1;
   const ty=Math.atan2(c.vel[0],c.vel[2]), tp=-Math.asin(clamp(c.vel[1]/sp,-1,1));
@@ -592,7 +614,7 @@ function steerTo(desire, vel, speed, maxF){
 const LIFE = [
 { /* ------------------------------------------------------- NEON SCHOOL RUN */
   name:'FOUR SCHOOLS + SHARK',
-  desc:'four coloured shoals drift slowly until a patrolling shark breaks into a hunt; lone prey fish scatter too',
+  desc:'four shoals drift until a shark hunts; rival sharks invade, and the loser falls in pieces the fish scavenge',
   init(){
     // four independent schools (own goal + colour), each true Reynolds boids
     this.BASE_SIZE=0.39; this.BASE_MS=2.0;
@@ -637,8 +659,84 @@ const LIFE = [
     // shark with a patrol/hunt state machine — pronounced tail swish
     this.respawns=[];                                  // eaten fish waiting to swim back in
     this.chomps=[];                                    // brief burst effects where fish were eaten
-    this.shark={ pos:[0,6,0], vel:[1,0,0], yaw:0,pitch:0,roll:0, ph:0, wf:2.4, wa:0.5,
-      u:0, state:'patrol', timer:rnd(7,12), target:null, lunge:0, eaten:0, quota:10 };
+    this.pieces=[];                                    // chunks of a slain shark falling to the floor
+    this.pieceMesh=octa();
+    this.rival=null;                                   // intruder shark during a takeover event
+    this.rivalTimer=rnd(420,900);                      // 7–15 min until a rival appears
+    this.shark=this.makeSharkObj([0,6,0], 1);
+  },
+  // build a shark: random body form + random hue, given a palette hue slot
+  makeSharkObj(pos, hueIdx){
+    return { pos:[pos[0],pos[1],pos[2]], vel:[1,0,0], yaw:0,pitch:0,roll:0,
+      ph:0, wf:2.4, wa:0.5, u:0, state:'patrol', timer:rnd(7,12), target:null,
+      lunge:0, eaten:0, quota:10, hueIdx,
+      form:SHARK_FORMS[(Math.random()*SHARK_FORMS.length)|0], hj:rnd(-30,30) };
+  },
+  // an intruder shark enters from off-screen, in a hue distinct from the resident
+  spawnRival(){
+    const side=(Math.random()*4|0), M=BND.x-1, y=rnd(6,12);
+    let pos;
+    if      (side===0) pos=[-M,y,rnd(-10,10)];
+    else if (side===1) pos=[ M,y,rnd(-10,10)];
+    else if (side===2) pos=[rnd(-10,10),y,-M];
+    else               pos=[rnd(-10,10),y, M];
+    const opts=[0,1,2].filter(i=>i!==this.shark.hueIdx);
+    const rv=this.makeSharkObj(pos, opts[(Math.random()*opts.length)|0]);
+    rv.chomps=0; rv.biteCd=1.0;
+    this.rival=rv; this.shark.state='flee';
+  },
+  // the resident shark is slain: scatter falling chunks the fish will scavenge
+  killShark(s){
+    const hue=mod(PAL.h[s.hueIdx]+s.hj,360), n=9+(Math.random()*4|0);
+    for (let i=0;i<n;i++){
+      const d=norm3([rnd(-1,1),rnd(-1,1),rnd(-1,1)]);
+      this.pieces.push({
+        pos:[s.pos[0]+rnd(-1.5,1.5), s.pos[1]+rnd(-1,1), s.pos[2]+rnd(-2,2)],
+        vel:[d[0]*rnd(1,4), rnd(0.5,3), d[2]*rnd(1,4)],
+        ang:[rnd(TAU),rnd(TAU),rnd(TAU)], spin:[rnd(-4,4),rnd(-4,4),rnd(-4,4)],
+        size:rnd(0.6,1.3), hue, life:rnd(16,24), landed:false
+      });
+    }
+    this.spawnChomp(s.pos, 3.5);
+  },
+  // resident flees, rival pursues 5% faster and bites; 5 bites finish it
+  updateChase(dt){
+    const sh=this.shark, rv=this.rival, CHASE=11;
+    const flee=[sh.pos[0]-rv.pos[0], sh.pos[1]-rv.pos[1], sh.pos[2]-rv.pos[2]];
+    const acc=steerTo(flee, sh.vel, CHASE, 28);
+    acc[0]*=1.8; acc[1]=acc[1]*1.8+Math.sin(t*2.3)*4; acc[2]*=1.8;   // evasive bob
+    boundsForce(sh.pos, acc, 4, 18);
+    sh.vel[0]+=acc[0]*dt; sh.vel[1]+=acc[1]*dt; sh.vel[2]+=acc[2]*dt;
+    let s1=Math.hypot(sh.vel[0],sh.vel[1],sh.vel[2])||1;
+    if (s1>CHASE){ const k=CHASE/s1; sh.vel[0]*=k; sh.vel[1]*=k; sh.vel[2]*=k; }
+    sh.pos[0]+=sh.vel[0]*dt; sh.pos[1]+=sh.vel[1]*dt; sh.pos[2]+=sh.vel[2]*dt;
+    containBox(sh.pos, sh.vel, 0.8); sh.wf=6.5; sh.wa=0.5; headingOf(sh, dt);
+
+    const RMAX=CHASE*1.05;                                            // only 5% faster
+    const to=[sh.pos[0]-rv.pos[0], sh.pos[1]-rv.pos[1], sh.pos[2]-rv.pos[2]];
+    const racc=steerTo(to, rv.vel, RMAX, 28);
+    racc[0]*=1.8; racc[1]*=1.8; racc[2]*=1.8;
+    boundsForce(rv.pos, racc, 4, 18);
+    rv.vel[0]+=racc[0]*dt; rv.vel[1]+=racc[1]*dt; rv.vel[2]+=racc[2]*dt;
+    let s2=Math.hypot(rv.vel[0],rv.vel[1],rv.vel[2])||1;
+    if (s2>RMAX){ const k=RMAX/s2; rv.vel[0]*=k; rv.vel[1]*=k; rv.vel[2]*=k; }
+    rv.pos[0]+=rv.vel[0]*dt; rv.pos[1]+=rv.vel[1]*dt; rv.pos[2]+=rv.vel[2]*dt;
+    containBox(rv.pos, rv.vel, 0.8); rv.wf=7.5; rv.wa=0.55; headingOf(rv, dt);
+
+    rv.biteCd-=dt;
+    const dd=(sh.pos[0]-rv.pos[0])**2+(sh.pos[1]-rv.pos[1])**2+(sh.pos[2]-rv.pos[2])**2;
+    if (dd<20 && rv.biteCd<=0){
+      rv.chomps++; rv.biteCd=0.7; this.spawnChomp(sh.pos, 2.2);
+      const d=Math.sqrt(dd)||1, push=6;                               // knock the resident forward
+      sh.vel[0]+=(sh.pos[0]-rv.pos[0])/d*push;
+      sh.vel[1]+=(sh.pos[1]-rv.pos[1])/d*push;
+      sh.vel[2]+=(sh.pos[2]-rv.pos[2])/d*push;
+      if (rv.chomps>=5){                                              // resident slain — rival takes over
+        this.killShark(sh);
+        rv.state='patrol'; rv.timer=rnd(7,12); rv.eaten=0; rv.quota=10; rv.target=null;
+        this.shark=rv; this.rival=null; this.rivalTimer=rnd(420,900);
+      }
+    }
   },
   nearestBoid(p){
     let best=null, bd=1e9;
@@ -672,10 +770,29 @@ const LIFE = [
     }
     this.chomps.push({ pos:[pos[0],pos[1],pos[2]], parts, age:0, life:0.85, size });
   },
+  // fish are drawn to fallen shark chunks and nibble the nearest one down
+  lurePieces(c, v, acc, maxF, dt){
+    if (!this.pieces.length) return;
+    let bp=null, bd=1e9;
+    for (const p of this.pieces){
+      const dx=p.pos[0]-c.pos[0], dy=p.pos[1]-c.pos[1], dz=p.pos[2]-c.pos[2];
+      const d2=dx*dx+dy*dy+dz*dz;
+      if (d2<bd){ bd=d2; bp=p; }
+    }
+    if (bp && bd<400){                                    // within 20 units: go feed
+      const lu=steerTo([bp.pos[0]-c.pos[0],bp.pos[1]-c.pos[1],bp.pos[2]-c.pos[2]], v, c.ms, maxF);
+      acc[0]+=lu[0]*3.2; acc[1]+=lu[1]*3.2; acc[2]+=lu[2]*3.2;
+      if (bd<2.0){ bp.size-=0.5*dt; bp.life-=0.5*dt; }    // nibble
+    }
+  },
   update(dt){
     const P=u=>[Math.sin(u)*(BND.x*0.8), 8.5+Math.sin(u*0.6)*3.5, Math.sin(2*u)*(BND.z*0.58)];
-    const sh=this.shark;
+    let sh=this.shark;
 
+    // a rival shark periodically invades and chases the resident to the death
+    if (!this.rival){ this.rivalTimer-=dt; if (this.rivalTimer<=0) this.spawnRival(); }
+    if (this.rival){ this.updateChase(dt); }
+    else {
     // -- shark state machine: long calm patrol, occasional aggressive hunt --
     sh.timer-=dt;
     const sacc=[0,0,0];
@@ -717,6 +834,8 @@ const LIFE = [
     sh.pos[0]+=sh.vel[0]*dt; sh.pos[1]+=sh.vel[1]*dt; sh.pos[2]+=sh.vel[2]*dt;
     containBox(sh.pos, sh.vel, 0.8);
     headingOf(sh, dt);
+    }
+    sh=this.shark;   // a rival may have just taken over as resident
 
     // travelling goals (each school roams its own region/phase)
     for (const s of this.schools){
@@ -766,6 +885,7 @@ const LIFE = [
       const g=this.schools[c.school].goal;
       const go=steerTo([g[0]-c.pos[0], g[1]-c.pos[1], g[2]-c.pos[2]], v, c.ms, MF);
       acc[0]+=go[0]*W_GOAL; acc[1]+=go[1]*W_GOAL; acc[2]+=go[2]*W_GOAL;
+      this.lurePieces(c, v, acc, MF, dt);                  // scavenge fallen shark chunks
 
       // flee the shark — stronger, wider, and harder while it hunts
       const fx=c.pos[0]-sh.pos[0], fy=c.pos[1]-sh.pos[1], fz=c.pos[2]-sh.pos[2];
@@ -809,6 +929,23 @@ const LIFE = [
       }
       if (ch.age>=ch.life) this.chomps.splice(i,1);
     }
+    // slain-shark chunks: tumble, fall, settle on the floor, then fade
+    for (let i=this.pieces.length-1;i>=0;i--){
+      const p=this.pieces[i];
+      p.life-=dt;
+      if (!p.landed){
+        p.vel[1]-=10*dt;
+        p.pos[0]+=p.vel[0]*dt; p.pos[1]+=p.vel[1]*dt; p.pos[2]+=p.vel[2]*dt;
+        p.vel[0]*=0.99; p.vel[2]*=0.99;
+        p.ang[0]+=p.spin[0]*dt; p.ang[1]+=p.spin[1]*dt; p.ang[2]+=p.spin[2]*dt;
+        const floor=p.size*0.5+0.15;
+        if (p.pos[1]<=floor){ p.pos[1]=floor; p.landed=true; p.vel[1]=0;
+          p.vel[0]*=0.3; p.vel[2]*=0.3; p.spin[0]*=0.1; p.spin[1]*=0.2; p.spin[2]*=0.1; }
+        p.pos[0]=clamp(p.pos[0],-BND.x+0.5,BND.x-0.5);
+        p.pos[2]=clamp(p.pos[2],-BND.z+0.5,BND.z-0.5);
+      }
+      if (p.life<=0 || p.size<0.15) this.pieces.splice(i,1);
+    }
 
     // --- solitary prey fish: lazy wander, panic-flee the shark ---
     for (const c of this.loners){
@@ -817,6 +954,7 @@ const LIFE = [
       const wd=[Math.cos(c.wander), Math.sin(t*0.3+c.wph)*0.35, Math.sin(c.wander)];
       const ws=steerTo(wd, v, c.ms, 6);
       acc[0]+=ws[0]; acc[1]+=ws[1]; acc[2]+=ws[2];
+      this.lurePieces(c, v, acc, 6, dt);                   // scavenge fallen shark chunks
       // flee the shark — stronger/wider while it hunts
       const fx=c.pos[0]-sh.pos[0], fy=c.pos[1]-sh.pos[1], fz=c.pos[2]-sh.pos[2];
       const fd2=fx*fx+fy*fy+fz*fz;
@@ -869,12 +1007,26 @@ const LIFE = [
               PAL.h[1], 100, 76, k*0.7, 1.4);
       }
     }
+    // fallen shark chunks settling on the floor (fade out near end of life)
+    for (const p of this.pieces){
+      const k=clamp(p.life/3,0,1)*a;
+      gatherFaces(transformPts(this.pieceMesh.v, p.pos, p.ang[1], p.ang[0], p.ang[2],
+        [p.size*0.6,p.size*0.6,p.size*0.6]), this.pieceMesh.f,
+        { h:p.hue, s:62, l0:12, l1:24, a:k, edge:30, edgeA:0.7 });
+    }
     const sh=this.shark;
-    // shark flushes brighter/redder while hunting
+    // shark flushes brighter/redder while hunting; its form + hue are randomised
     const hunt = sh.state==='hunt';
-    gatherFaces(transformPts(fishVerts(sh,t), sh.pos, sh.yaw, sh.pitch, sh.roll,
-      [1.5,1.7,3.1]), FISH.f,
-      { h:PAL.h[1], s:hunt?75:55, l0:hunt?20:13, l1:hunt?34:26, a:a, edge:32, edgeA:hunt?1:0.8 });
+    const shHue=mod(PAL.h[sh.hueIdx]+sh.hj,360);
+    gatherFaces(transformPts(fishVerts(sh,t,sh.form), sh.pos, sh.yaw, sh.pitch, sh.roll,
+      [1.5,1.7,3.1]), sh.form.f,
+      { h:shHue, s:hunt?75:55, l0:hunt?20:13, l1:hunt?34:26, a:a, edge:32, edgeA:hunt?1:0.8 });
+    if (this.rival){
+      const rv=this.rival, rvHue=mod(PAL.h[rv.hueIdx]+rv.hj,360);
+      gatherFaces(transformPts(fishVerts(rv,t,rv.form), rv.pos, rv.yaw, rv.pitch, rv.roll,
+        [1.55,1.75,3.2]), rv.form.f,
+        { h:rvHue, s:82, l0:24, l1:38, a:a, edge:34, edgeA:1 });   // intruder, vivid
+    }
   }
 },
 { /* ---------------------------------------------------------- VOID MANTAS */
