@@ -661,7 +661,8 @@ const LIFE = [
     this.chomps=[];                                    // brief burst effects where fish were eaten
     this.pieces=[];                                    // chunks of a slain shark falling to the floor
     this.pieceMesh=octa();
-    this.foods=[];                                     // pellets of fish food sinking from the top
+    this.foodMesh={ v:[[0,0.7,0],[-0.6,-0.45,0],[0.6,-0.45,0]], f:[{i:[0,1,2],both:1}] }; // food = a triangle
+    this.foods=[];                                     // triangular "bubbles" of food rising from the floor
     this.crumbs=[];                                    // bits that break off food as fish nibble
     this.foodTimer=rnd(120,360);                       // 2–6 min between feedings
     this.rival=null;                                   // intruder shark during a takeover event
@@ -672,17 +673,18 @@ const LIFE = [
   dropFood(){
     const n=3+(Math.random()*3|0);
     for (let i=0;i<n;i++){
-      // spawn where it projects into the top third of the screen at the current camera angle
+      // spawn near the floor, on-screen, and let it rise like a bubble
       let pos=null;
       for (let tries=0; tries<40; tries++){
-        const c=[rnd(-BND.x*0.7,BND.x*0.7), rnd(9,BND.y1-0.4), rnd(-BND.z*0.7,BND.z*0.7)];
+        const c=[rnd(-BND.x*0.7,BND.x*0.7), BND.y0+rnd(0.3,2), rnd(-BND.z*0.7,BND.z*0.7)];
         const pj=project(c);
-        if (pj.vis && pj.x>W*0.12 && pj.x<W*0.88 && pj.y>H*0.04 && pj.y<H*0.33){ pos=c; break; }
+        if (pj.vis && pj.x>W*0.12 && pj.x<W*0.88){ pos=c; break; }
       }
-      if (!pos) pos=[rnd(-BND.x*0.5,BND.x*0.5), BND.y1-1, rnd(-BND.z*0.5,BND.z*0.5)]; // fallback: near ceiling
+      if (!pos) pos=[rnd(-BND.x*0.5,BND.x*0.5), BND.y0+0.6, rnd(-BND.z*0.5,BND.z*0.5)];
       this.foods.push({
-        pos, vel:[rnd(-0.2,0.2), -rnd(0.13,0.27), rnd(-0.2,0.2)],   // slow drift down
-        size:rnd(0.9,1.6), biteCd:0, life:rnd(45,75), ang:rnd(TAU), spin:rnd(-2,2),
+        pos, vel:[0, rnd(0.4,0.8), 0],                              // rises
+        wob:rnd(TAU), wsp:rnd(1.2,2.2), wamp:rnd(0.4,0.9),          // side-to-side wobble
+        size:rnd(0.9,1.6), biteCd:0, life:rnd(45,75), ang:rnd(TAU), spin:rnd(-3,3),
         hue:mod(38+rnd(-12,12),360)                                  // amber/green food
       });
     }
@@ -1030,12 +1032,15 @@ const LIFE = [
     // sinking food pellets: drift down, settle on the floor, expire if uneaten
     for (let i=this.foods.length-1;i>=0;i--){
       const f=this.foods[i];
-      f.biteCd-=dt; f.life-=dt;
-      f.vel[1]=Math.max(f.vel[1]-0.1*dt, -0.4); f.vel[0]*=0.98; f.vel[2]*=0.98;
-      f.pos[0]+=f.vel[0]*dt; f.pos[1]+=f.vel[1]*dt; f.pos[2]+=f.vel[2]*dt;
+      f.biteCd-=dt; f.life-=dt; f.wob+=f.wsp*dt;
+      f.vel[1]=Math.min(f.vel[1]+0.15*dt, 1.2);               // bubble accelerates upward
+      f.pos[1]+=f.vel[1]*dt;
+      f.pos[0]+=Math.sin(f.wob)*f.wamp*dt;                    // wobble side to side
+      f.pos[2]+=Math.cos(f.wob*0.8)*f.wamp*dt;
+      f.pos[0]=clamp(f.pos[0],-BND.x+0.5,BND.x-0.5);
+      f.pos[2]=clamp(f.pos[2],-BND.z+0.5,BND.z-0.5);
       f.ang+=f.spin*dt;
-      if (f.pos[1]<=BND.y0+0.3){ f.pos[1]=BND.y0+0.3; f.vel[1]=0; f.vel[0]*=0.6; f.vel[2]*=0.6; }
-      if (f.size<0.25 || f.life<=0) this.foods.splice(i,1);
+      if (f.pos[1]>=BND.y1-0.3 || f.size<0.25 || f.life<=0) this.foods.splice(i,1); // pops at the surface
     }
     // crumbs knocked off the food: tumble and fall, then fade
     for (let i=this.crumbs.length-1;i>=0;i--){
@@ -1098,7 +1103,7 @@ const LIFE = [
     // eat bursts: scattering bits + an expanding shock ring
     for (const ch of this.chomps){
       const rp=ch.age/ch.life, k=(1-rp)*a;
-      for (const pt of ch.parts) point3(pt.p, 0.3*ch.size, PAL.h[1], 100, 72, k);
+      for (const pt of ch.parts) point3(pt.p, 0.3*ch.size, PAL.h[1], 100, 72, k*0.5); // particles at half alpha
       const rr=lerp(0.15, ch.size*2.5+1.5, rp), n2=18;
       for (let s2=0;s2<n2;s2++){
         const a0=s2/n2*TAU, a1=(s2+1)/n2*TAU;
@@ -1114,11 +1119,11 @@ const LIFE = [
         [p.size*0.6,p.size*0.6,p.size*0.6]), this.pieceMesh.f,
         { h:p.hue, s:62, l0:12, l1:24, a:k, edge:30, edgeA:0.7 });
     }
-    // sinking food pellets + the crumbs nibbled off them — tiny flakes, not blobs
+    // rising triangular food bubbles + the crumbs nibbled off them
     for (const f of this.foods){
-      gatherFaces(transformPts(this.pieceMesh.v, f.pos, f.ang,0,0,
-        [f.size*0.15,f.size*0.15,f.size*0.15]), this.pieceMesh.f,
-        { h:f.hue, s:78, l0:28, l1:26, a:a, edge:20, edgeA:0.8 });
+      gatherFaces(transformPts(this.foodMesh.v, f.pos, f.ang, f.ang*0.7, 0,
+        [f.size*0.3,f.size*0.3,f.size*0.3]), this.foodMesh.f,
+        { h:f.hue, s:78, l0:28, l1:26, a:a, edge:20, edgeA:0.8, both:1 });
     }
     for (const cr of this.crumbs){
       const k=clamp(cr.life/1.5,0,1)*a;
