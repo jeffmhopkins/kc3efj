@@ -1085,15 +1085,15 @@ const LIFE = [
         [p.size*0.6,p.size*0.6,p.size*0.6]), this.pieceMesh.f,
         { h:p.hue, s:62, l0:12, l1:24, a:k, edge:30, edgeA:0.7 });
     }
-    // sinking food pellets + the crumbs nibbled off them
+    // sinking food pellets + the crumbs nibbled off them — tiny flakes, not blobs
     for (const f of this.foods){
       gatherFaces(transformPts(this.pieceMesh.v, f.pos, f.ang,0,0,
-        [f.size*0.4,f.size*0.4,f.size*0.4]), this.pieceMesh.f,
-        { h:f.hue, s:80, l0:30, l1:28, a:a, edge:24, edgeA:0.9 });
+        [f.size*0.15,f.size*0.15,f.size*0.15]), this.pieceMesh.f,
+        { h:f.hue, s:78, l0:28, l1:26, a:a, edge:20, edgeA:0.8 });
     }
     for (const cr of this.crumbs){
       const k=clamp(cr.life/1.5,0,1)*a;
-      point3(cr.pos, cr.size*4, cr.hue, 85, 64, k);
+      point3(cr.pos, cr.size*1.2, cr.hue, 78, 60, k*0.7);
     }
     const sh=this.shark;
     // a hunting shark pulses hot/red so the hunt reads clearly; form + hue are randomised
