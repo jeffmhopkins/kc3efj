@@ -95,6 +95,8 @@ const fogAt = z => clamp(1-(z-FOG0)/(FOG1-FOG0), 0, 1);
 
 // creatures swim inside this volume (fits every tank)
 const BND = { x:27, z:27, y0:1.2, y1:18.5 };
+// upright decor the fish should dodge: {x,z,r,top}; the active decor fills this
+const OBSTACLES = [];
 
 /* --------------------------------------------------------------- camera */
 const cam = { pos:[0,10,-40], r:[1,0,0], u:[0,1,0], f:[0,0,1] };
@@ -389,6 +391,7 @@ const DECOR = [
   name:'CRYSTAL SPIRES',
   desc:'jagged octahedral crystal clusters — refracted light pulses through them in sequence',
   init(){
+    OBSTACLES.length=0;
     this.oct = octa();
     this.spires = [];
     const sites = [[-20,-13],[15,-17],[21,9],[-6,21],[-23,5],[8,-3],[3,15],[-13,-20]];
@@ -428,12 +431,18 @@ const DECOR = [
     this.pyr  = { v:[[-2.4,0,-2.4],[2.4,0,-2.4],[2.4,0,2.4],[-2.4,0,2.4],[0,3.4,0]],
       f:[{i:[0,1,4],both:1},{i:[1,2,4],both:1},{i:[2,3,4],both:1},{i:[3,0,4],both:1}] };
     // scatter columns across the whole floor (bases sunk so they embed)
+    OBSTACLES.length=0;
     this.items=[];
     const spots=[[-21,-15],[-11,-21],[3,-23],[15,-20],[23,-7],[22,8],[13,20],[-3,23],
                  [-18,17],[-24,4],[-9,-3],[10,5],[7,-13],[-14,-9],[18,-2],[-6,11]];
     for (const [x,z] of spots){
-      if (Math.random()<0.72) this.items.push({ m:this.col,  pos:[x,-1.5,z], yaw:rnd(TAU), pitch:0, roll:0 });
-      else                    this.items.push({ m:this.col2, pos:[x,0.85,z], yaw:rnd(TAU), pitch:Math.PI*0.49, roll:rnd(-0.1,0.1) });
+      if (Math.random()<0.72){
+        const hh=rnd(4, 0.8*BND.y1);                       // random height up to 80% of the visible height
+        this.items.push({ m:this.col, pos:[x,-1.0,z], yaw:rnd(TAU), pitch:0, roll:0, scl:[1, hh/7, 1] });
+        OBSTACLES.push({ x, z, r:0.85, top:hh-1.0 });      // fish dodge the standing column up close
+      } else {
+        this.items.push({ m:this.col2, pos:[x,0.85,z], yaw:rnd(TAU), pitch:Math.PI*0.49, roll:rnd(-0.1,0.1) });
+      }
     }
     this.pyrs=[{pos:[19,-1.6,12], yaw:0.7, roll:0.18},{pos:[-20,-1.6,-9], yaw:-0.5, roll:-0.12}];
     this.arches=[{x:8,z:-9},{x:-15,z:11}];
@@ -443,7 +452,7 @@ const DECOR = [
   gather(a){
     const st = { h:PAL.h[0], s:28, l0:11, l1:18, a:a, edge:30, edgeA:0.5 };
     for (const it of this.items)
-      gatherFaces(transformPts(it.m.v, it.pos, it.yaw, it.pitch, it.roll), it.m.f, st);
+      gatherFaces(transformPts(it.m.v, it.pos, it.yaw, it.pitch, it.roll, it.scl), it.m.f, st);
     for (const p of this.pyrs)
       gatherFaces(transformPts(this.pyr.v, p.pos, p.yaw, 0, p.roll), this.pyr.f, st);
     // broken arches with a firefly drifting a figure-eight through each
@@ -462,6 +471,7 @@ const DECOR = [
   name:'SIGNAL KELP',
   desc:'a row of swaying ribbon antennae, near-black blades traced in neon, hot buds at the tips',
   init(){
+    OBSTACLES.length=0;
     this.strands=[];
     const spots=[[-21,-10],[-12,9],[-4,-19],[5,15],[13,-7],[21,13],[-19,19],[17,21],
                  [0,1],[9,-16],[-8,-2],[23,-3]];
@@ -546,6 +556,19 @@ function boundsForce(p, acc, m=5, g=14, my=2){
   if (p[2]<-BND.z+m)  acc[2]+=g*((-BND.z+m)-p[2])/m;
   if (p[1]> BND.y1-my) acc[1]-=g*(p[1]-(BND.y1-my))/my;   // smaller vertical margin: use the full height
   if (p[1]< BND.y0+my) acc[1]+=g*((BND.y0+my)-p[1])/my;
+}
+// close-range collision avoidance: steer horizontally clear of upright decor
+function avoidObstacles(pos, acc){
+  for (let i=0;i<OBSTACLES.length;i++){
+    const o=OBSTACLES[i];
+    if (pos[1] > o.top+1.5) continue;                 // clear above the column top
+    const dx=pos[0]-o.x, dz=pos[2]-o.z, d2=dx*dx+dz*dz;
+    const R=o.r+2.2;                                   // only react up close
+    if (d2<R*R && d2>1e-4){
+      const d=Math.sqrt(d2), push=(R-d)/R, k=22*push*push;
+      acc[0]+=dx/d*k; acc[2]+=dz/d*k;
+    }
+  }
 }
 // hard tank containment: even mid-panic a creature can't pass the glass —
 // it's clamped to the wall and its outward velocity is damped (slides along).
@@ -731,7 +754,7 @@ const LIFE = [
       // flee the shark — stronger, wider, and harder while it hunts
       const fx=c.pos[0]-sh.pos[0], fy=c.pos[1]-sh.pos[1], fz=c.pos[2]-sh.pos[2];
       const fd2=fx*fx+fy*fy+fz*fz;
-      const FR = hunting ? 16 : 15;
+      const FR = hunting ? 20 : 18;
       let panic=1;
       if (fd2 < FR*FR){
         const fl=steerTo([fx,fy,fz], v, c.ms*2.4, MF*2.8);
@@ -740,6 +763,7 @@ const LIFE = [
         panic = hunting ? 2.6 : 2.2;
       }
       boundsForce(c.pos, acc);
+      avoidObstacles(c.pos, acc);
 
       v[0]+=acc[0]*dt; v[1]+=acc[1]*dt; v[2]+=acc[2]*dt;
       let sp=Math.hypot(v[0],v[1],v[2])||1;
@@ -770,7 +794,7 @@ const LIFE = [
       // flee the shark — stronger/wider while it hunts
       const fx=c.pos[0]-sh.pos[0], fy=c.pos[1]-sh.pos[1], fz=c.pos[2]-sh.pos[2];
       const fd2=fx*fx+fy*fy+fz*fz;
-      const FR = hunting ? 16 : 15;
+      const FR = hunting ? 20 : 18;
       let panic=1;
       if (fd2 < FR*FR){
         const fl=steerTo([fx,fy,fz], v, c.ms*2.4, 6*2.8);
@@ -779,6 +803,7 @@ const LIFE = [
         panic = hunting ? 2.6 : 2.2;
       }
       boundsForce(c.pos, acc);
+      avoidObstacles(c.pos, acc);
       v[0]+=acc[0]*dt; v[1]+=acc[1]*dt; v[2]+=acc[2]*dt;
       let sp=Math.hypot(v[0],v[1],v[2])||1;
       const top=c.ms*panic, lo=c.ms*0.5;            // drifts slow unless threatened
